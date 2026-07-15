@@ -1,7 +1,0 @@
-node_modules/
-dist/
-coverage/
-.droiddeck/
-*.log
-*.tgz
-SHA256SUMS
