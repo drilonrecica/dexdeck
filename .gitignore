@@ -1,0 +1,9 @@
+/target/
+/.idea/
+/.vscode/
+/.fleet/
+/.DS_Store
+/dexdeck-debug.log
+**/.gradle/
+**/build/
+**/local.properties

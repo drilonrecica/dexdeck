@@ -1,0 +1,21 @@
+[package]
+name = "dexdeck"
+description = "A fast, private terminal control plane for Android development"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+dexdeck-android = { path = "../dexdeck-android" }
+dexdeck-config = { path = "../dexdeck-config" }
+dexdeck-core = { path = "../dexdeck-core" }
+dexdeck-gradle = { path = "../dexdeck-gradle" }
+dexdeck-protocol = { path = "../dexdeck-protocol" }
+dexdeck-tui = { path = "../dexdeck-tui" }
+
+[lints]
+workspace = true
