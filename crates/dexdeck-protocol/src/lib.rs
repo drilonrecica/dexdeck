@@ -11,7 +11,9 @@ mod test_result;
 pub use bridge::{
     BridgeComplete, BridgeEnvelope, BridgePayload, BridgeProtocolError, BridgeStreamValidator,
 };
-pub use cli::{CliEnvelope, CliEvent, OperationError, ProjectSnapshot};
+pub use cli::{
+    CliEnvelope, CliEvent, ErrorCategory, OperationContext, OperationError, ProjectSnapshot,
+};
 pub use diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, SourceLocation};
 pub use job::{JobId, JobKind, JobRecord, JobState};
 pub use log::{LogPriority, LogRecord};

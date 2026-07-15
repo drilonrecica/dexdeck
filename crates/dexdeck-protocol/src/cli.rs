@@ -76,8 +76,44 @@ pub enum CliEvent {
 #[serde(rename_all = "camelCase")]
 pub struct OperationError {
     pub code: String,
-    pub category: String,
+    pub category: ErrorCategory,
     pub message: String,
+    pub context: OperationContext,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggested_action: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ErrorCategory {
+    Configuration,
+    ProjectDetection,
+    UnsupportedProject,
+    GradleBridge,
+    GradleOperation,
+    ToolMissing,
+    Device,
+    Emulator,
+    Adb,
+    Test,
+    Cache,
+    Permission,
+    Internal,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationContext {
+    pub operation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    pub previous_model_usable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_output_reference: Option<String>,
 }
