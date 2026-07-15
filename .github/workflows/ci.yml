@@ -31,11 +31,19 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.cargo/bin/cargo-deny
             target
           key: cargo-quality-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
 
       - name: Check formatting
         run: cargo fmt --all -- --check
+
+      - name: Install cargo-deny
+        shell: bash
+        run: |
+          if ! cargo deny --version 2>/dev/null | grep --quiet 'cargo-deny 0.20.2'; then
+            cargo install cargo-deny --locked --version 0.20.2
+          fi
 
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -47,6 +55,9 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --no-deps
+
+      - name: Check dependency policy
+        run: cargo deny --all-features check
 
       - name: Verify tracked files are unchanged
         run: git diff --exit-code

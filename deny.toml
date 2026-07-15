@@ -1,0 +1,59 @@
+[graph]
+all-features = true
+targets = [
+    { triple = "aarch64-apple-darwin" },
+    { triple = "x86_64-apple-darwin" },
+    { triple = "aarch64-unknown-linux-gnu" },
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "x86_64-pc-windows-msvc" },
+]
+
+[advisories]
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+confidence-threshold = 0.8
+unused-allowed-license = "allow"
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+deny = [
+    { name = "actix-web", reason = "DexDeck must not contain an HTTP server or client" },
+    { name = "attohttpc", reason = "DexDeck must not make direct network requests" },
+    { name = "awc", reason = "DexDeck must not make direct network requests" },
+    { name = "curl", reason = "DexDeck must not make direct network requests" },
+    { name = "hyper", reason = "DexDeck must not contain an HTTP stack" },
+    { name = "isahc", reason = "DexDeck must not make direct network requests" },
+    { name = "native-tls", reason = "DexDeck has no TLS client requirement" },
+    { name = "openssl", reason = "DexDeck has no TLS client requirement" },
+    { name = "quinn", reason = "DexDeck must not contain a QUIC stack" },
+    { name = "reqwest", reason = "DexDeck must not make direct network requests" },
+    { name = "rouille", reason = "DexDeck must not contain an HTTP server" },
+    { name = "rustls", reason = "DexDeck has no TLS client requirement" },
+    { name = "surf", reason = "DexDeck must not make direct network requests" },
+    { name = "tiny_http", reason = "DexDeck must not contain an HTTP server" },
+    { name = "tokio-tungstenite", reason = "DexDeck must not contain a WebSocket client" },
+    { name = "tonic", reason = "DexDeck must not contain a network RPC client" },
+    { name = "tungstenite", reason = "DexDeck must not contain a WebSocket client" },
+    { name = "ureq", reason = "DexDeck must not make direct network requests" },
+    { name = "warp", reason = "DexDeck must not contain an HTTP server" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

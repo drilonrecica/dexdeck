@@ -10,12 +10,12 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-dexdeck-android = { path = "../dexdeck-android" }
-dexdeck-config = { path = "../dexdeck-config" }
-dexdeck-core = { path = "../dexdeck-core" }
-dexdeck-gradle = { path = "../dexdeck-gradle" }
-dexdeck-protocol = { path = "../dexdeck-protocol" }
-dexdeck-tui = { path = "../dexdeck-tui" }
+dexdeck-android = { version = "0.2.0", path = "../dexdeck-android" }
+dexdeck-config = { version = "0.2.0", path = "../dexdeck-config" }
+dexdeck-core = { version = "0.2.0", path = "../dexdeck-core" }
+dexdeck-gradle = { version = "0.2.0", path = "../dexdeck-gradle" }
+dexdeck-protocol = { version = "0.2.0", path = "../dexdeck-protocol" }
+dexdeck-tui = { version = "0.2.0", path = "../dexdeck-tui" }
 
 [lints]
 workspace = true
