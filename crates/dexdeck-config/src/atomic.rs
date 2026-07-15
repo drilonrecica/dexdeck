@@ -63,6 +63,35 @@ pub fn write_json_atomic<T: Serialize>(
     Ok(())
 }
 
+pub fn write_text_atomic(path: impl AsRef<Path>, text: &str) -> Result<(), StorageError> {
+    let path = path.as_ref();
+    reject_symlink(path)?;
+    let parent = path.parent().ok_or_else(|| {
+        StorageError::io(
+            path,
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent"),
+        )
+    })?;
+    ensure_private_directory(parent)?;
+
+    let mut temporary =
+        NamedTempFile::new_in(parent).map_err(|source| StorageError::io(parent, source))?;
+    set_private_file_permissions(temporary.as_file(), temporary.path())?;
+    temporary
+        .write_all(text.as_bytes())
+        .and_then(|()| temporary.flush())
+        .map_err(|source| StorageError::io(path, source))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|source| StorageError::io(path, source))?;
+    temporary
+        .persist(path)
+        .map_err(|error| StorageError::io(path, error.error))?;
+    sync_parent_directory(parent)?;
+    Ok(())
+}
+
 pub fn load_json<T: DeserializeOwned>(
     path: impl AsRef<Path>,
     expected_schema_version: u32,

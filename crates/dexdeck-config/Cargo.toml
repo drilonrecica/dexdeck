@@ -10,15 +10,14 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+dexdeck-protocol = { version = "0.2.0", path = "../dexdeck-protocol" }
 directories.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
-dexdeck-protocol = { version = "0.2.0", path = "../dexdeck-protocol" }
+toml_edit.workspace = true
 
 [lints]
 workspace = true
