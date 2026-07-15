@@ -1,6 +1,6 @@
 # DexDeck Engineering Specification
 
-**Status:** Pre-implementation specification; product and brand direction approved  
+**Status:** Pre-implementation specification; DexDeck v0.2.0 product and brand direction approved
 **Product name:** DexDeck  
 **Former codename:** DroidDeck; retired for all new code, packages, paths, and documentation  
 **Repository:** `drilonrecica/dexdeck`  
@@ -10,6 +10,10 @@
 **Canonical file name:** `SPECS.md`  
 
 ---
+
+The repository retains historical DroidDeck `v0.1.x` tags. They MUST NOT be
+rewritten or reused. The complete DexDeck rewrite described here ships as
+`v0.2.0`; no migration from the retired implementation is required.
 
 ## 1. Purpose of this document
 
@@ -59,7 +63,7 @@ DexDeck is a native Rust TUI and CLI that understands Android Gradle projects, m
 
 ### 3.2 Supported project family
 
-Version 0.1 supports **native Android Gradle projects only**.
+Version 0.2.0 supports **native Android Gradle projects only**.
 
 Supported source languages and build styles include:
 
@@ -72,7 +76,7 @@ Supported source languages and build styles include:
 - Android library modules
 - Included builds and convention plugins insofar as they are required to model the primary build correctly
 
-The following are not first-class supported project families in version 0.1:
+The following are not first-class supported project families in version 0.2.0:
 
 - Flutter
 - React Native
@@ -87,8 +91,9 @@ DexDeck MAY detect unsupported project families and display a precise unsupporte
 
 ### 3.3 Android Gradle Plugin support
 
-- Full project-model support targets **Android Gradle Plugin 8.0 and newer**.
-- Older AGP projects SHOULD enter a degraded task mode instead of being rejected outright.
+- Full project-model support targets **Android Gradle Plugin 8.x and 9.x**.
+- AGP versions older than 8 and AGP 10 or newer SHOULD enter a degraded task
+  mode instead of being rejected outright until a compatible adapter exists.
 - Degraded mode may provide Gradle task execution, manually configured run profiles, ADB device access, and Logcat even when detailed variant modeling is unavailable.
 - AGP-specific logic MUST be isolated behind versioned adapters.
 
@@ -123,9 +128,9 @@ This simplifies:
 - Job history
 - Command-palette context
 
-### 3.6 One active device in version 0.1
+### 3.6 One active device in version 0.2.0
 
-Version 0.1 supports one active interactive device per DexDeck instance.
+Version 0.2.0 supports one active interactive device per DexDeck instance.
 
 The user may switch the active device. Batch installation or testing across multiple devices is deferred.
 
@@ -571,9 +576,9 @@ The Gradle integration must be injected externally through an init script or equ
 
 ---
 
-## 5. Non-goals for version 0.1
+## 5. Non-goals for version 0.2.0
 
-The following are explicitly outside the version 0.1 scope:
+The following are explicitly outside the version 0.2.0 scope:
 
 - Integrated source-code editor
 - Android layout preview
@@ -706,7 +711,7 @@ The installed user-facing artifact remains one native executable.
 
 ### 7.3 No persistent daemon
 
-Version 0.1 MUST NOT install or run a DexDeck background daemon.
+Version 0.2.0 MUST NOT install or run a DexDeck background daemon.
 
 The foreground process owns:
 
@@ -735,7 +740,7 @@ dexdeck/
 ├── LICENSE
 ├── NOTICE
 ├── README.md
-├── SPEC.md
+├── SPECS.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md
 ├── docs/
@@ -770,7 +775,7 @@ dexdeck/
     └── pull_request_template.md
 ```
 
-Crates are initially workspace-private. Publishing internal crates is not a version 0.1 goal.
+Crates are initially workspace-private. Publishing internal crates is not a version 0.2.0 goal.
 
 Brand-derived identifiers MUST remain centralized even though the final public name is now selected. Centralization prevents drift across the CLI, TUI, paths, package metadata, documentation, tests, and release automation.
 
@@ -908,7 +913,7 @@ Only lightweight metadata for the most recent 50 jobs is persisted by default. F
 - Logcat, device tracking, emulator boot monitoring, and other non-Gradle operations may run concurrently.
 - Gradle itself may use its own internal parallelism.
 - The user may queue Gradle actions.
-- A future advanced override may permit parallel Gradle invocations, but it is not a version 0.1 requirement.
+- A future advanced override may permit parallel Gradle invocations, but it is not a version 0.2.0 requirement.
 
 ---
 
@@ -999,7 +1004,7 @@ The model should include, when available:
 
 Included builds and composite builds must be considered for model correctness.
 
-Version 0.1 exposes only primary-project Android modules as first-class navigation items. Tasks from included builds may be available through the task palette or advanced task browser.
+Version 0.2.0 exposes only primary-project Android modules as first-class navigation items. Tasks from included builds may be available through the task palette or advanced task browser.
 
 ### 10.6 Degraded mode
 
@@ -1436,7 +1441,7 @@ The exact thresholds may be tuned through testing.
 
 ### 15.4 Workspaces
 
-Version 0.1 should include:
+Version 0.2.0 should include:
 
 - Project/overview
 - Run profiles
@@ -1573,7 +1578,7 @@ dexdeck
 
 ### 16.2 Core commands
 
-Proposed version 0.1 commands:
+Proposed version 0.2.0 commands:
 
 ```bash
 dexdeck
@@ -1837,7 +1842,7 @@ A full pairing wizard is deferred.
 
 ### 19.4 Existing emulator management
 
-Version 0.1 supports existing AVDs:
+Version 0.2.0 supports existing AVDs:
 
 - List
 - Start
@@ -1847,7 +1852,7 @@ Version 0.1 supports existing AVDs:
 - Show key properties
 - Monitor boot completion
 
-DexDeck does not create new AVDs in version 0.1.
+DexDeck does not create new AVDs in version 0.2.0.
 
 DexDeck never automatically stops an emulator when the TUI exits, including emulators it launched.
 
@@ -1986,7 +1991,7 @@ Recommended actions:
 
 ## 21. Testing
 
-### 21.1 Supported test types in version 0.1
+### 21.1 Supported test types in version 0.2.0
 
 - Local JVM unit tests
 - Connected Android instrumentation tests
@@ -2041,7 +2046,7 @@ Actions:
 
 ### 21.5 Diagnostics milestone split
 
-Version 0.1 must include useful compiler errors and test failures.
+Version 0.2.0 must include useful compiler errors and test failures.
 
 Advanced lint dashboards, manifest-merger visualization, and rich SARIF browsing may follow immediately after the core release if they risk delaying the daily loop.
 
@@ -2101,7 +2106,7 @@ Built-in presets may cover:
 
 Respect `$VISUAL` and `$EDITOR` when no explicit command is configured.
 
-Do not use parent-process heuristics in version 0.1 because terminals, multiplexers, and wrappers make them unreliable.
+Do not use parent-process heuristics in version 0.2.0 because terminals, multiplexers, and wrappers make them unreliable.
 
 ---
 
@@ -2145,7 +2150,7 @@ Custom commands may launch non-Gradle tools such as:
 
 They are subject to repository trust.
 
-Version 0.1 executes argv-based commands only.
+Version 0.2.0 executes argv-based commands only.
 
 ---
 
@@ -2292,7 +2297,7 @@ DexDeck must work in:
 
 It must detect terminal capabilities rather than require a graphical desktop.
 
-Version 0.1 uses whatever ADB environment is visible to the running process.
+Version 0.2.0 uses whatever ADB environment is visible to the running process.
 
 Host/container and WSL emulator forwarding are deferred.
 
@@ -2308,9 +2313,12 @@ Recommended order:
 2. POSIX shell installer
 3. PowerShell installer
 4. Official Homebrew tap with prebuilt bottles
-5. Crates.io as a developer fallback
-6. WinGet after Windows support is credible
-7. Community-maintained Nix, AUR, Scoop, Debian, RPM, and other packages
+5. WinGet after Windows support is credible
+6. Community-maintained Nix, AUR, Scoop, Debian, RPM, and other packages
+
+Crates.io publication is deferred for version 0.2.0. Internal workspace crates
+remain private; the architecture MUST NOT be collapsed or publicly versioned
+solely to support `cargo install dexdeck`.
 
 ### 28.2 Homebrew
 
@@ -2326,7 +2334,8 @@ Bottles should be prebuilt. Users should not need Rust installed.
 
 ### 28.3 Cargo installation
 
-`cargo install` is a fallback for Rust users, not the primary distribution path.
+Rust users may build or install from a source checkout. Publishing internal
+workspace crates to enable a crates.io install is not a version 0.2.0 goal.
 
 ### 28.4 Release tooling
 
@@ -2472,7 +2481,7 @@ Do not introduce runtime downloads merely to reduce binary size.
 
 ---
 
-## 32. v0.1 milestone plan
+## 32. v0.2.0 milestone plan
 
 ### Milestone 0: Foundation
 
@@ -2576,7 +2585,7 @@ Definition of done:
 - Failures link to source locations where possible
 - Machine-readable results are versioned
 
-### Milestone 5: v0.1 hardening and release
+### Milestone 5: v0.2.0 hardening and release
 
 Deliver:
 
@@ -2602,9 +2611,9 @@ Definition of done:
 
 ---
 
-## 33. Version 0.1 acceptance criteria
+## 33. Version 0.2.0 acceptance criteria
 
-Version 0.1 is acceptable when all of the following are true.
+Version 0.2.0 is acceptable when all of the following are true.
 
 ### Project modeling
 
@@ -2672,7 +2681,7 @@ Version 0.1 is acceptable when all of the following are true.
 
 ## 34. Deferred roadmap candidates
 
-Potential post-v0.1 work, prioritized only after real user feedback:
+Potential post-v0.2.0 work, prioritized only after real user feedback:
 
 - Rich Android Lint and SARIF dashboard
 - Manifest merger explorer
@@ -2702,7 +2711,7 @@ AI coding agents working on this repository must follow these rules:
 4. Do not add a direct network feature without an explicit specification revision.
 5. Do not modify project files during normal launch.
 6. Do not parse Gradle build scripts as the primary source of variant truth.
-7. Do not add a background daemon in version 0.1.
+7. Do not add a background daemon in version 0.2.0.
 8. Do not implement a chat-centric TUI.
 9. Do not use unbounded queues for logs or process output.
 10. Do not silently swallow model, cache, or process errors.
@@ -2738,7 +2747,7 @@ The implementation should create ADRs for at least:
 7. One Gradle operation per root
 8. Byte-bounded Logcat ring buffer
 9. Direct argv-based custom command execution
-10. One project and one active device per process in v0.1
+10. One project and one active device per process in v0.2.0
 11. DexDeck public identity, Deckmark constraints, and Lazuli semantic theme
 
 ---
