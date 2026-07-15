@@ -12,6 +12,8 @@ publish = false
 [dependencies]
 dexdeck-protocol = { version = "0.2.0", path = "../dexdeck-protocol" }
 thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
