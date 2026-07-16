@@ -505,7 +505,7 @@ compact terminals work; exit restores state without stopping external tools.
   authentic terminal recording; generate completions and man pages.
 - Commit: "docs: add DexDeck user and release guides"
 
-### F7.7 Configure distributions — P0/High
+### F7.7 Configure distributions — P0/High ✅
 
 - Pin cargo-dist and commit reviewed workflows for all five targets.
 - Rebuild/verify the bridge; produce archives, SHA-256 checksums,

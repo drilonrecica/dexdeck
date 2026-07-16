@@ -9,6 +9,9 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[package.metadata.dist]
+dist = true
+
 [dependencies]
 clap.workspace = true
 dexdeck-android = { version = "0.2.0", path = "../dexdeck-android" }
