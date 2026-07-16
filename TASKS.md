@@ -450,7 +450,7 @@ structured, rerunnable, and source-addressable in CLI and TUI.
   custom commands, and actionable doctor results.
 - Commit: "feat(tui): add device and tooling views"
 
-### F6.6 Finalize session lifecycle — P0/Critical
+### F6.6 Finalize session lifecycle — P0/Critical ✅
 
 - Restore valid selections and filters; prompt for active foreground jobs;
   never stop ADB/emulators/Gradle daemons; add reduced motion, bounded active

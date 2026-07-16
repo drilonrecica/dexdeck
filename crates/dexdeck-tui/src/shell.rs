@@ -27,8 +27,9 @@ use ratatui::{
 use dexdeck_protocol::LogRecord;
 
 use crate::{
-    ColorCapability, FocusPane, GlyphMode, LazuliTheme, LogOverlay, LogWorkspaceAction,
-    LogcatWorkspace, RunWorkspace, TestWorkspace, ToolingTab, ToolingWorkspace, fuzzy_actions,
+    ActiveAnimation, ColorCapability, FocusPane, GlyphMode, LazuliTheme, LogOverlay,
+    LogWorkspaceAction, LogcatWorkspace, RunWorkspace, TerminalProfile, TestWorkspace, ToolingTab,
+    ToolingWorkspace, fuzzy_actions,
 };
 
 pub const MINIMUM_WIDTH: u16 = 40;
@@ -68,7 +69,6 @@ const ASCII_BORDER: border::Set = border::Set {
     horizontal_bottom: "-",
 };
 
-const FRAME_INTERVAL: Duration = Duration::from_millis(34);
 const MAX_LOG_NOTIFICATIONS_PER_TICK: usize = 8;
 
 #[derive(Clone, Debug)]
@@ -88,6 +88,14 @@ pub trait LogcatBackend: Send {
     fn copy(&mut self, grouped: bool) -> Result<(), String>;
     fn export(&mut self) -> Result<(), String>;
     fn toggle_recording(&mut self) -> Result<(), String>;
+    /// Only jobs owned by this DexDeck session belong here. External ADB
+    /// servers, emulators, and Gradle daemons must never be included.
+    fn active_foreground_jobs(&self) -> usize {
+        0
+    }
+    fn cancel_foreground_jobs(&mut self) -> Result<(), String> {
+        Ok(())
+    }
     fn stop(&mut self);
 }
 
@@ -113,6 +121,9 @@ struct ShellState {
     overlay: ControlOverlay,
     overlay_query: String,
     focus: FocusPane,
+    exit_prompt_jobs: Option<usize>,
+    dirty: bool,
+    animation: ActiveAnimation,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -132,20 +143,17 @@ pub fn run_with_logcat(
     options: ShellOptions,
     mut logcat: Option<Box<dyn LogcatBackend>>,
 ) -> Result<(), ShellError> {
+    let profile = TerminalProfile::detect();
     let theme = LazuliTheme::new(
         ColorCapability::detect(options.no_color),
-        if options.ascii {
-            GlyphMode::Ascii
-        } else {
-            GlyphMode::Unicode
-        },
+        profile.glyph_mode(options.ascii),
     );
     let mut session = TerminalSession::enter()?;
     #[cfg(debug_assertions)]
     if std::env::var_os("DEXDECK_INTERNAL_TEST_PANIC_AFTER_ENTER").is_some() {
         panic!("injected terminal restoration test panic");
     }
-    let result = run_loop(session.terminal_mut(), theme, &mut logcat);
+    let result = run_loop(session.terminal_mut(), theme, profile, &mut logcat);
     if let Some(logcat) = &mut logcat {
         logcat.stop();
     }
@@ -155,6 +163,7 @@ pub fn run_with_logcat(
 fn run_loop<B: Backend>(
     terminal: &mut Terminal<B>,
     theme: LazuliTheme,
+    profile: TerminalProfile,
     backend: &mut Option<Box<dyn LogcatBackend>>,
 ) -> Result<(), ShellError> {
     let mut state = ShellState::default();
@@ -168,10 +177,46 @@ fn run_loop<B: Backend>(
         }
         if event::poll(Duration::from_millis(16))? {
             let event = event::read()?;
+            state.dirty = true;
             let overlay_open = state.overlay != ControlOverlay::None
                 || (state.logcat_active && state.logcat.overlay != LogOverlay::None);
+            if state.exit_prompt_jobs.is_some() {
+                match event {
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Char('y') | KeyCode::Char('q'),
+                        kind: KeyEventKind::Press,
+                        ..
+                    }) => return Ok(()),
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Char('c'),
+                        kind: KeyEventKind::Press,
+                        ..
+                    }) => {
+                        if let Some(backend) = backend.as_deref_mut() {
+                            backend
+                                .cancel_foreground_jobs()
+                                .map_err(ShellError::Backend)?;
+                        }
+                        return Ok(());
+                    }
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Char('n') | KeyCode::Esc,
+                        kind: KeyEventKind::Press,
+                        ..
+                    }) => state.exit_prompt_jobs = None,
+                    _ => {}
+                }
+                continue;
+            }
             if should_exit(&event) && !overlay_open {
-                return Ok(());
+                let active_jobs = backend
+                    .as_deref()
+                    .map_or(0, |backend| backend.active_foreground_jobs());
+                if active_jobs == 0 {
+                    return Ok(());
+                }
+                state.exit_prompt_jobs = Some(active_jobs);
+                continue;
             }
             match event {
                 Event::Resize(width, height) => {
@@ -254,6 +299,7 @@ fn run_loop<B: Backend>(
                     } else {
                         ToolingTab::GradleTasks
                     });
+                    state.animation.start(6, profile.reduced_motion);
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char('r'),
@@ -266,6 +312,7 @@ fn run_loop<B: Backend>(
                     state.logcat_active = false;
                     state.tooling_active = false;
                     state.run.dirty = true;
+                    state.animation.start(6, profile.reduced_motion);
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char('l'),
@@ -292,6 +339,7 @@ fn run_loop<B: Backend>(
                             ),
                         }
                     }
+                    state.animation.start(6, profile.reduced_motion);
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char('t'),
@@ -304,6 +352,7 @@ fn run_loop<B: Backend>(
                     state.run_active = false;
                     state.tooling_active = false;
                     state.tests.dirty = true;
+                    state.animation.start(6, profile.reduced_motion);
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char(key),
@@ -365,11 +414,17 @@ fn run_loop<B: Backend>(
                 _ => {}
             }
         }
-        if last_draw.elapsed() >= FRAME_INTERVAL
-            && (!state.logcat_active || state.logcat.dirty)
-            && (!state.tests_active || state.tests.dirty)
+        let workspace_dirty = (state.logcat_active && state.logcat.dirty)
+            || (state.tests_active && state.tests.dirty)
+            || (state.run_active && state.run.dirty)
+            || (state.tooling_active && state.tooling.dirty);
+        let animation_dirty = state.animation.active();
+        if last_draw.elapsed() >= profile.frame_interval()
+            && (state.dirty || workspace_dirty || animation_dirty)
         {
             terminal.draw(|frame| render(frame, &mut state, theme))?;
+            state.dirty = false;
+            let _ = state.animation.advance();
             last_draw = Instant::now();
         }
     }
@@ -549,6 +604,33 @@ fn render(frame: &mut Frame<'_>, state: &mut ShellState, theme: LazuliTheme) {
         rows[3],
     );
     render_control_overlay(frame, state, theme);
+    render_exit_prompt(frame, state, theme);
+}
+
+fn render_exit_prompt(frame: &mut Frame<'_>, state: &ShellState, theme: LazuliTheme) {
+    let Some(job_count) = state.exit_prompt_jobs else {
+        return;
+    };
+    let area = frame.area();
+    let width = area.width.saturating_sub(4).min(70);
+    let prompt = Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(5) / 2,
+        width,
+        5,
+    );
+    frame.render_widget(
+        Paragraph::new(format!(
+            "{job_count} foreground job(s) are active.\ny/q detach and exit | c cancel owned jobs and exit | n stay"
+        ))
+        .style(
+            Style::default()
+                .fg(theme.colors.warning)
+                .bg(theme.colors.surface),
+        )
+        .block(panel(" Active jobs ", theme)),
+        prompt,
+    );
 }
 
 fn render_control_overlay(frame: &mut Frame<'_>, state: &ShellState, theme: LazuliTheme) {
@@ -697,6 +779,8 @@ fn restore_terminal() {
 pub enum ShellError {
     #[error("terminal operation failed: {0}")]
     Io(#[from] io::Error),
+    #[error("backend operation failed: {0}")]
+    Backend(String),
 }
 
 #[cfg(test)]
@@ -741,6 +825,38 @@ mod tests {
         assert!(should_exit(&key(KeyCode::Esc, KeyModifiers::NONE)));
         assert!(should_exit(&key(KeyCode::Char('c'), KeyModifiers::CONTROL)));
         assert!(!should_exit(&key(KeyCode::Char('x'), KeyModifiers::NONE)));
+    }
+
+    #[test]
+    fn layout_breakpoint_snapshot() {
+        assert_eq!(
+            [
+                DashboardLayout::for_size(140, 40),
+                DashboardLayout::for_size(90, 20),
+                DashboardLayout::for_size(60, 14),
+                DashboardLayout::for_size(39, 9),
+            ],
+            [
+                DashboardLayout::Full,
+                DashboardLayout::Compact,
+                DashboardLayout::SingleWorkspace,
+                DashboardLayout::ResizeWarning,
+            ]
+        );
+    }
+
+    #[test]
+    fn event_exit_snapshot() {
+        let events = [
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE)),
+        ];
+        assert_eq!(
+            events.map(|event| should_exit(&event)),
+            [true, true, true, false]
+        );
     }
 
     #[test]

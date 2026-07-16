@@ -14,6 +14,7 @@ mod parse;
 mod paths;
 mod resolve;
 mod schema;
+mod session;
 
 pub use atomic::{
     MAX_LOCAL_STATE_BYTES, RecoveredFile, load_json, load_json_recovering, write_json_atomic,
@@ -50,3 +51,4 @@ pub use schema::{
     GradleConfig, IntentExtra, KeymapPreset, LaunchMode, LogScope, LogcatConfig, ProfileConfig,
     ProjectConfig, UiConfig, UnicodeMode,
 };
+pub use session::{SESSION_SCHEMA_VERSION, SessionState, load_session, save_session};
