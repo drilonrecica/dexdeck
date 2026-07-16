@@ -376,6 +376,8 @@ name = "dexdeck-tui"
 version = "0.2.0"
 dependencies = [
  "crossterm",
+ "dexdeck-core",
+ "dexdeck-protocol",
  "ratatui",
  "thiserror",
 ]

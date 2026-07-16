@@ -347,7 +347,7 @@ stop; normal workflows preserve data; cancellation leaves no process behind.
   and recording while keeping structured stdout clean.
 - Commit: "feat(cli): expose structured logs"
 
-### F4.7 Add the Logcat workspace — P1/High
+### F4.7 Add the Logcat workspace — P1/High ✅
 
 - Add virtualized rows, follow/scroll, filter/search, process/scope selection,
   crash navigation, dropped status, and export/record indicators.

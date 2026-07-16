@@ -28,7 +28,7 @@ use dexdeck_protocol::{
     LogTextSearch, ModuleVariant, ModulesSnapshot, OperationContext, OperationError, ProjectModel,
     ProjectSnapshot, SavedLogFilterPreset, VariantsSnapshot,
 };
-use dexdeck_tui::ShellOptions;
+use dexdeck_tui::{LogcatBackend, LogcatBackendEvent, ShellOptions};
 use serde::Serialize;
 
 #[derive(Parser)]
@@ -105,6 +105,255 @@ impl Cli {
     pub fn debug_log_path(&self) -> Option<&std::path::Path> {
         self.debug_log.as_deref()
     }
+
+    #[must_use]
+    pub fn shell_logcat_backend(&self) -> Option<Box<dyn LogcatBackend>> {
+        self.command.is_none().then(|| {
+            Box::new(ShellLogcatBackend::new(ShellLogcatContext {
+                project: self.project.clone(),
+                sdk: self.sdk.clone(),
+                module: self.module.clone(),
+                variant: self.variant.clone(),
+                device: self.device.clone(),
+                profile: self.profile.clone(),
+                config: self.config.clone(),
+            })) as Box<dyn LogcatBackend>
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ShellLogcatContext {
+    project: Option<std::path::PathBuf>,
+    sdk: Option<std::path::PathBuf>,
+    module: Option<String>,
+    variant: Option<String>,
+    device: Option<String>,
+    profile: Option<String>,
+    config: Option<std::path::PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ShellLogcatCommand {
+    SetDeviceScope(bool),
+    Stop,
+}
+
+#[derive(Debug)]
+struct ShellLogcatBackend {
+    context: ShellLogcatContext,
+    events_tx: std::sync::mpsc::SyncSender<LogcatBackendEvent>,
+    events_rx: std::sync::mpsc::Receiver<LogcatBackendEvent>,
+    commands: Option<tokio::sync::mpsc::Sender<ShellLogcatCommand>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ShellLogcatBackend {
+    fn new(context: ShellLogcatContext) -> Self {
+        let (events_tx, events_rx) = std::sync::mpsc::sync_channel(32);
+        Self {
+            context,
+            events_tx,
+            events_rx,
+            commands: None,
+            worker: None,
+        }
+    }
+}
+
+impl LogcatBackend for ShellLogcatBackend {
+    fn start(&mut self) -> Result<(), String> {
+        if self.worker.is_some() {
+            return Ok(());
+        }
+        let context = self.context.clone();
+        let events = self.events_tx.clone();
+        let (commands_tx, commands_rx) = tokio::sync::mpsc::channel(8);
+        self.commands = Some(commands_tx);
+        self.worker = Some(
+            std::thread::Builder::new()
+                .name("dexdeck-logcat".into())
+                .spawn(move || shell_logcat_worker(context, events, commands_rx))
+                .map_err(|error| error.to_string())?,
+        );
+        Ok(())
+    }
+
+    fn try_recv(&mut self) -> Option<LogcatBackendEvent> {
+        self.events_rx.try_recv().ok()
+    }
+
+    fn set_device_scope(&mut self, device_scope: bool) -> Result<(), String> {
+        self.commands
+            .as_ref()
+            .ok_or_else(|| "Logcat is not running".to_owned())?
+            .try_send(ShellLogcatCommand::SetDeviceScope(device_scope))
+            .map_err(|_| "Logcat control queue is busy".to_owned())
+    }
+
+    fn select_process(&mut self) -> Result<(), String> {
+        Err("Process selection requires an active tracked process; use the process overlay.".into())
+    }
+
+    fn copy(&mut self, _grouped: bool) -> Result<(), String> {
+        Err("No Logcat row is selected for OSC 52 copy.".into())
+    }
+
+    fn export(&mut self) -> Result<(), String> {
+        Err("Choose an export path from the export overlay.".into())
+    }
+
+    fn toggle_recording(&mut self) -> Result<(), String> {
+        Err("Choose a recording path before starting recording.".into())
+    }
+
+    fn stop(&mut self) {
+        if let Some(commands) = &self.commands {
+            let _ = commands.try_send(ShellLogcatCommand::Stop);
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+        self.commands = None;
+    }
+}
+
+fn shell_logcat_worker(
+    context: ShellLogcatContext,
+    events: std::sync::mpsc::SyncSender<LogcatBackendEvent>,
+    mut commands: tokio::sync::mpsc::Receiver<ShellLogcatCommand>,
+) {
+    let cli = Cli {
+        project: context.project,
+        sdk: context.sdk,
+        module: context.module,
+        variant: context.variant,
+        device: context.device,
+        profile: context.profile,
+        format: OutputFormat::Human,
+        gradle_arg: Vec::new(),
+        no_color: false,
+        ascii: false,
+        debug_log: None,
+        config: context.config,
+        yes: false,
+        command: None,
+    };
+    let project = match load_operation_project(&cli) {
+        Ok(project) => project,
+        Err(error) => {
+            let _ = events.try_send(LogcatBackendEvent::Error(format!(
+                "project, module, or variant unavailable: {error}"
+            )));
+            return;
+        }
+    };
+    let tools = match SdkResolver::default().resolve(&SdkResolution {
+        cli: cli.sdk.clone(),
+        configuration: project.config.android.sdk_path.clone(),
+        project_root: Some(project.root.clone()),
+        ..SdkResolution::default()
+    }) {
+        Ok(tools) => tools,
+        Err(error) => {
+            let _ = events.try_send(LogcatBackendEvent::Error(error.to_string()));
+            return;
+        }
+    };
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            let _ = events.try_send(LogcatBackendEvent::Error(error.to_string()));
+            return;
+        }
+    };
+    runtime.block_on(async move {
+        let adb = Arc::new(AdbClient::new(
+            tools.adb.clone(),
+            tools.sdk_root.clone(),
+            ProcessSupervisor::default(),
+        ));
+        let devices = match adb.enriched_devices().await {
+            Ok(devices) => devices,
+            Err(error) => {
+                let _ = events.try_send(LogcatBackendEvent::Error(error.to_string()));
+                return;
+            }
+        };
+        let mut redactor = SecretRedactor::new();
+        let profile = match RunProfileResolver::resolve(
+            &project.model,
+            &project.config,
+            &devices,
+            &RunProfileSelection {
+                profile: cli.profile,
+                module: cli.module,
+                variant: cli.variant,
+                device: cli.device,
+                gradle_arguments: Vec::new(),
+                require_device: true,
+            },
+            &mut redactor,
+        ) {
+            Ok(profile) => profile,
+            Err(error) => {
+                let _ = events.try_send(LogcatBackendEvent::Error(format!(
+                    "select a module, variant, package, and exact device: {error}"
+                )));
+                return;
+            }
+        };
+        let Some(device) = profile.device else {
+            let _ = events.try_send(LogcatBackendEvent::Error("select an exact device".into()));
+            return;
+        };
+        let Some(package) = profile.variant.application_id else {
+            let _ = events.try_send(LogcatBackendEvent::Error("selected variant has no application ID".into()));
+            return;
+        };
+        let service = LogcatService::new(
+            tools.adb,
+            tools.sdk_root,
+            ProcessSupervisor::default(),
+        );
+        let mut session = match service
+            .start(LogcatRequest {
+                device_serial: device.serial,
+                package: Some(package),
+                scope: LogScope::Application,
+                process: None,
+            })
+            .await
+        {
+            Ok(session) => session,
+            Err(error) => {
+                let _ = events.try_send(LogcatBackendEvent::Error(error.to_string()));
+                return;
+            }
+        };
+        let _ = events.try_send(LogcatBackendEvent::Status("Logcat connected".into()));
+        loop {
+            tokio::select! {
+                command = commands.recv() => match command {
+                    Some(ShellLogcatCommand::SetDeviceScope(device)) => {
+                        session.set_scope(if device { LogScope::Device } else { LogScope::Application });
+                    }
+                    Some(ShellLogcatCommand::Stop) | None => break,
+                },
+                batch = session.recv() => match batch {
+                    Some(batch) => {
+                        if events.try_send(LogcatBackendEvent::Records(batch)).is_err() {
+                            let _ = events.try_send(LogcatBackendEvent::Status(
+                                "UI is behind; a bounded notification batch was dropped".into()
+                            ));
+                        }
+                    }
+                    None => break,
+                }
+            }
+        }
+        let _ = session.shutdown().await;
+    });
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]

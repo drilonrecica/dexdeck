@@ -2,6 +2,7 @@ use std::{
     io::{self, Stdout, Write},
     panic,
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use crossterm::{
@@ -23,7 +24,11 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::{ColorCapability, GlyphMode, LazuliTheme};
+use dexdeck_protocol::LogRecord;
+
+use crate::{
+    ColorCapability, GlyphMode, LazuliTheme, LogOverlay, LogWorkspaceAction, LogcatWorkspace,
+};
 
 pub const MINIMUM_WIDTH: u16 = 40;
 pub const MINIMUM_HEIGHT: u16 = 10;
@@ -39,19 +44,52 @@ const ASCII_BORDER: border::Set = border::Set {
     horizontal_bottom: "-",
 };
 
+const FRAME_INTERVAL: Duration = Duration::from_millis(34);
+const MAX_LOG_NOTIFICATIONS_PER_TICK: usize = 8;
+
+#[derive(Clone, Debug)]
+pub enum LogcatBackendEvent {
+    Records(Vec<LogRecord>),
+    Status(String),
+    Error(String),
+    Recording(bool),
+    Exporting(bool),
+}
+
+pub trait LogcatBackend: Send {
+    fn start(&mut self) -> Result<(), String>;
+    fn try_recv(&mut self) -> Option<LogcatBackendEvent>;
+    fn set_device_scope(&mut self, device_scope: bool) -> Result<(), String>;
+    fn select_process(&mut self) -> Result<(), String>;
+    fn copy(&mut self, grouped: bool) -> Result<(), String>;
+    fn export(&mut self) -> Result<(), String>;
+    fn toggle_recording(&mut self) -> Result<(), String>;
+    fn stop(&mut self);
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ShellOptions {
     pub no_color: bool,
     pub ascii: bool,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Debug, Default)]
 struct ShellState {
     input_count: u64,
     last_size: Option<(u16, u16)>,
+    logcat_active: bool,
+    logcat_started: bool,
+    logcat: LogcatWorkspace,
 }
 
 pub fn run(options: ShellOptions) -> Result<(), ShellError> {
+    run_with_logcat(options, None)
+}
+
+pub fn run_with_logcat(
+    options: ShellOptions,
+    mut logcat: Option<Box<dyn LogcatBackend>>,
+) -> Result<(), ShellError> {
     let theme = LazuliTheme::new(
         ColorCapability::detect(options.no_color),
         if options.ascii {
@@ -65,26 +103,121 @@ pub fn run(options: ShellOptions) -> Result<(), ShellError> {
     if std::env::var_os("DEXDECK_INTERNAL_TEST_PANIC_AFTER_ENTER").is_some() {
         panic!("injected terminal restoration test panic");
     }
-    run_loop(session.terminal_mut(), theme)
+    let result = run_loop(session.terminal_mut(), theme, &mut logcat);
+    if let Some(logcat) = &mut logcat {
+        logcat.stop();
+    }
+    result
 }
 
-fn run_loop<B: Backend>(terminal: &mut Terminal<B>, theme: LazuliTheme) -> Result<(), ShellError> {
+fn run_loop<B: Backend>(
+    terminal: &mut Terminal<B>,
+    theme: LazuliTheme,
+    backend: &mut Option<Box<dyn LogcatBackend>>,
+) -> Result<(), ShellError> {
     let mut state = ShellState::default();
-    terminal.draw(|frame| render(frame, &state, theme))?;
+    terminal.draw(|frame| render(frame, &mut state, theme))?;
+    let mut last_draw = Instant::now();
     loop {
-        let event = event::read()?;
-        if should_exit(&event) {
-            return Ok(());
+        if state.logcat_active
+            && let Some(backend) = backend.as_deref_mut()
+        {
+            for _ in 0..MAX_LOG_NOTIFICATIONS_PER_TICK {
+                let Some(notification) = backend.try_recv() else {
+                    break;
+                };
+                match notification {
+                    LogcatBackendEvent::Records(records) => state.logcat.ingest(records),
+                    LogcatBackendEvent::Status(status) => state.logcat.set_status(status),
+                    LogcatBackendEvent::Error(error) => {
+                        state
+                            .logcat
+                            .set_status(format!("Logcat unavailable: {error}"));
+                    }
+                    LogcatBackendEvent::Recording(active) => {
+                        state.logcat.recording = active;
+                        state.logcat.dirty = true;
+                    }
+                    LogcatBackendEvent::Exporting(active) => {
+                        state.logcat.exporting = active;
+                        state.logcat.dirty = true;
+                    }
+                }
+            }
         }
-        match event {
-            Event::Resize(width, height) => state.last_size = Some((width, height)),
-            Event::Key(KeyEvent {
-                kind: KeyEventKind::Press | KeyEventKind::Repeat,
-                ..
-            }) => state.input_count = state.input_count.saturating_add(1),
-            _ => {}
+        if event::poll(Duration::from_millis(16))? {
+            let event = event::read()?;
+            let overlay_open = state.logcat_active && state.logcat.overlay != LogOverlay::None;
+            if should_exit(&event) && !overlay_open {
+                return Ok(());
+            }
+            match event {
+                Event::Resize(width, height) => {
+                    state.last_size = Some((width, height));
+                    state.logcat.dirty = true;
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('l'),
+                    modifiers: KeyModifiers::CONTROL,
+                    kind: KeyEventKind::Press,
+                    ..
+                }) => {
+                    state.logcat_active = true;
+                    if !state.logcat_started {
+                        state.logcat_started = true;
+                        match backend.as_deref_mut() {
+                            Some(backend) => {
+                                if let Err(error) = backend.start() {
+                                    state
+                                        .logcat
+                                        .set_status(format!("Cannot start Logcat: {error}"));
+                                }
+                            }
+                            None => state.logcat.set_status(
+                                "Select a module, variant, package, and device to start Logcat.",
+                            ),
+                        }
+                    }
+                }
+                Event::Key(
+                    key @ KeyEvent {
+                        kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                        ..
+                    },
+                ) if state.logcat_active => {
+                    state.input_count = state.input_count.saturating_add(1);
+                    let action = state.logcat.handle_key(key);
+                    if let Some(backend) = backend.as_deref_mut() {
+                        let result = match action {
+                            LogWorkspaceAction::None => Ok(()),
+                            LogWorkspaceAction::ScopeChanged(device) => {
+                                backend.set_device_scope(device)
+                            }
+                            LogWorkspaceAction::ProcessSelectionRequested => {
+                                backend.select_process()
+                            }
+                            LogWorkspaceAction::CopyLine => backend.copy(false),
+                            LogWorkspaceAction::CopyGroup => backend.copy(true),
+                            LogWorkspaceAction::ExportRequested => backend.export(),
+                            LogWorkspaceAction::RecordingToggled => backend.toggle_recording(),
+                        };
+                        if let Err(error) = result {
+                            state.logcat.set_status(error);
+                        }
+                    }
+                }
+                Event::Key(KeyEvent {
+                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                    ..
+                }) => state.input_count = state.input_count.saturating_add(1),
+                Event::Mouse(mouse) if state.logcat_active => state.logcat.handle_mouse(mouse),
+                _ => {}
+            }
         }
-        terminal.draw(|frame| render(frame, &state, theme))?;
+        if last_draw.elapsed() >= FRAME_INTERVAL && (!state.logcat_active || state.logcat.dirty) {
+            terminal.draw(|frame| render(frame, &mut state, theme))?;
+            last_draw = Instant::now();
+        }
     }
 }
 
@@ -104,7 +237,7 @@ fn should_exit(event: &Event) -> bool {
     )
 }
 
-fn render(frame: &mut Frame<'_>, state: &ShellState, theme: LazuliTheme) {
+fn render(frame: &mut Frame<'_>, state: &mut ShellState, theme: LazuliTheme) {
     let area = frame.area();
     frame.render_widget(
         Block::new().style(
@@ -167,12 +300,16 @@ fn render(frame: &mut Frame<'_>, state: &ShellState, theme: LazuliTheme) {
             .block(panel(" Navigation ", theme)),
         columns[0],
     );
-    frame.render_widget(
-        Paragraph::new("Project overview\n\nWaiting for project discovery.")
-            .style(Style::default().fg(theme.colors.text_primary))
-            .block(panel(" Workspace ", theme)),
-        columns[1],
-    );
+    if state.logcat_active {
+        state.logcat.render(frame, columns[1], theme);
+    } else {
+        frame.render_widget(
+            Paragraph::new("Project overview\n\nWaiting for project discovery.")
+                .style(Style::default().fg(theme.colors.text_primary))
+                .block(panel(" Workspace ", theme)),
+            columns[1],
+        );
+    }
 
     let size = state.last_size.map_or_else(
         || format!("{}x{}", area.width, area.height),
@@ -304,7 +441,8 @@ mod tests {
         let backend = TestBackend::new(39, 3);
         let mut terminal = Terminal::new(backend)?;
         let theme = LazuliTheme::new(ColorCapability::NoColor, GlyphMode::Ascii);
-        terminal.draw(|frame| render(frame, &ShellState::default(), theme))?;
+        let mut state = ShellState::default();
+        terminal.draw(|frame| render(frame, &mut state, theme))?;
 
         let mut expected = Buffer::with_lines([
             "                                       ",
