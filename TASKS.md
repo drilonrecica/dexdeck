@@ -401,7 +401,7 @@ all processes; memory is bounded; no automatic disk writes occur.
 - Implement test CLI selection, human/JSON/JSONL, rerun-failed, and exit status.
 - Commit: "feat(cli): expose structured test results"
 
-### F5.7 Add tests and diagnostics workspaces — P1/High
+### F5.7 Add tests and diagnostics workspaces — P1/High ✅
 
 - Add hierarchy, counts, duration, failure detail, source opening, copy, raw
   output, and rerun actions using shared job/result data.

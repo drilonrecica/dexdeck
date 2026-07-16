@@ -28,6 +28,7 @@ use dexdeck_protocol::LogRecord;
 
 use crate::{
     ColorCapability, GlyphMode, LazuliTheme, LogOverlay, LogWorkspaceAction, LogcatWorkspace,
+    TestWorkspace,
 };
 
 pub const MINIMUM_WIDTH: u16 = 40;
@@ -78,8 +79,10 @@ struct ShellState {
     input_count: u64,
     last_size: Option<(u16, u16)>,
     logcat_active: bool,
+    tests_active: bool,
     logcat_started: bool,
     logcat: LogcatWorkspace,
+    tests: TestWorkspace,
 }
 
 pub fn run(options: ShellOptions) -> Result<(), ShellError> {
@@ -142,6 +145,7 @@ fn run_loop<B: Backend>(
                     ..
                 }) => {
                     state.logcat_active = true;
+                    state.tests_active = false;
                     if !state.logcat_started {
                         state.logcat_started = true;
                         match backend.as_deref_mut() {
@@ -157,6 +161,24 @@ fn run_loop<B: Backend>(
                             ),
                         }
                     }
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('t'),
+                    modifiers: KeyModifiers::CONTROL,
+                    kind: KeyEventKind::Press,
+                    ..
+                }) => {
+                    state.tests_active = true;
+                    state.logcat_active = false;
+                    state.tests.dirty = true;
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char(key),
+                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                    ..
+                }) if state.tests_active => {
+                    state.input_count = state.input_count.saturating_add(1);
+                    let _ = state.tests.handle_key(key);
                 }
                 Event::Key(
                     key @ KeyEvent {
@@ -193,7 +215,10 @@ fn run_loop<B: Backend>(
                 _ => {}
             }
         }
-        if last_draw.elapsed() >= FRAME_INTERVAL && (!state.logcat_active || state.logcat.dirty) {
+        if last_draw.elapsed() >= FRAME_INTERVAL
+            && (!state.logcat_active || state.logcat.dirty)
+            && (!state.tests_active || state.tests.dirty)
+        {
             terminal.draw(|frame| render(frame, &mut state, theme))?;
             last_draw = Instant::now();
         }
@@ -307,6 +332,8 @@ fn render(frame: &mut Frame<'_>, state: &mut ShellState, theme: LazuliTheme) {
     );
     if state.logcat_active {
         state.logcat.render(frame, columns[1], theme);
+    } else if state.tests_active {
+        state.tests.render(frame, columns[1], theme);
     } else {
         frame.render_widget(
             Paragraph::new("Project overview\n\nWaiting for project discovery.")
