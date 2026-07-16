@@ -163,7 +163,7 @@ tree cancellation works; CLI emits valid schema-v1 output.
 - Add AGP 8.0.2, 8.13, 9.0.1, and 9.3.0 compatibility lanes.
 - Commit: "test(fixtures): add Android project matrix"
 
-### F2.2 Implement fast filesystem discovery — P0/High
+### F2.2 Implement fast filesystem discovery — P0/High ✅
 
 - Walk upward or honor --project; detect root, wrapper, settings, Android
   signals, and basic SDK/JDK signals without invoking Gradle.
