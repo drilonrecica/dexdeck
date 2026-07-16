@@ -37,6 +37,9 @@ impl ConfigLoader {
         if let Some(detected) = &sources.detected {
             resolver.apply(detected, "<detected>")?;
         }
+        if let Some(path) = sources.shared.as_deref() {
+            self.reject_shared_sdk_path(path)?;
+        }
         self.apply_optional(
             &mut resolver,
             &mut documents,
@@ -67,6 +70,30 @@ impl ConfigLoader {
             documents,
             warnings,
         })
+    }
+
+    fn reject_shared_sdk_path(&self, path: &Path) -> Result<(), ConfigError> {
+        let source = match fs::read_to_string(path) {
+            Ok(source) => source,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(StorageError::io(path, error).into()),
+        };
+        let parsed = parse_config(path, &source)?;
+        if parsed
+            .config
+            .android
+            .as_ref()
+            .and_then(|android| android.sdk_path.as_ref())
+            .is_some()
+        {
+            return Err(ConfigError::Validation {
+                path: path.to_path_buf(),
+                field: "android.sdk_path".into(),
+                message: "machine-specific SDK paths are not allowed in shared configuration"
+                    .into(),
+            });
+        }
+        Ok(())
     }
 
     fn apply_optional(

@@ -241,7 +241,7 @@ changes become stale; failure never replaces a valid snapshot.
 
 ## Phase 3 — SDK, devices, emulators, Gradle tasks, and app execution
 
-### F3.1 Resolve Android SDK tools — P0/High
+### F3.1 Resolve Android SDK tools — P0/High ✅
 
 - Implement specified SDK/ADB/emulator/sdkmanager resolution and a doctor model.
 - Diagnose missing packages and print commands without silent installation.

@@ -280,6 +280,11 @@ dependencies = [
 [[package]]
 name = "dexdeck-android"
 version = "0.2.0"
+dependencies = [
+ "dexdeck-protocol",
+ "tempfile",
+ "thiserror",
+]
 
 [[package]]
 name = "dexdeck-config"

@@ -15,6 +15,8 @@ pub struct ConfigFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<ProjectConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub android: Option<AndroidConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gradle: Option<GradleConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<UiConfig>,
@@ -44,6 +46,7 @@ impl ConfigFile {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ConfigLayer {
     pub project: ProjectConfig,
+    pub android: AndroidConfig,
     pub gradle: GradleConfig,
     pub ui: UiConfig,
     pub logcat: LogcatConfig,
@@ -56,6 +59,7 @@ impl From<ConfigFile> for ConfigLayer {
     fn from(config: ConfigFile) -> Self {
         Self {
             project: config.project.unwrap_or_default(),
+            android: config.android.unwrap_or_default(),
             gradle: config.gradle.unwrap_or_default(),
             ui: config.ui.unwrap_or_default(),
             logcat: config.logcat.unwrap_or_default(),
@@ -64,6 +68,13 @@ impl From<ConfigFile> for ConfigLayer {
             commands: config.commands,
         }
     }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AndroidConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sdk_path: Option<PathBuf>,
 }
 
 impl ConfigLayer {

@@ -1,5 +1,6 @@
 //! Versioned internal and external data contracts.
 
+mod android;
 mod bridge;
 mod cli;
 mod diagnostic;
@@ -8,6 +9,7 @@ mod log;
 mod model;
 mod test_result;
 
+pub use android::*;
 pub use bridge::{
     BridgeComplete, BridgeEnvelope, BridgePayload, BridgeProtocolError, BridgeStreamValidator,
 };

@@ -3,13 +3,14 @@ use std::{collections::BTreeMap, path::PathBuf};
 use dexdeck_protocol::LogPriority;
 
 use crate::{
-    CommandConfig, ConfigError, ConfigLayer, EditorConfig, GradleConfig, KeymapPreset, LogScope,
-    LogcatConfig, ProfileConfig, ProjectConfig, UiConfig, UnicodeMode,
+    AndroidConfig, CommandConfig, ConfigError, ConfigLayer, EditorConfig, GradleConfig,
+    KeymapPreset, LogScope, LogcatConfig, ProfileConfig, ProjectConfig, UiConfig, UnicodeMode,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedConfig {
     pub project: ProjectConfig,
+    pub android: AndroidConfig,
     pub gradle_arguments: Vec<String>,
     pub keymap: KeymapPreset,
     pub reduced_motion: bool,
@@ -26,6 +27,7 @@ impl Default for ResolvedConfig {
     fn default() -> Self {
         Self {
             project: ProjectConfig::default(),
+            android: AndroidConfig::default(),
             gradle_arguments: Vec::new(),
             keymap: KeymapPreset::Default,
             reduced_motion: false,
@@ -58,6 +60,9 @@ impl ConfigResolver {
     ) -> Result<&mut Self, ConfigError> {
         layer.validate(source_path.into())?;
         apply_project(&mut self.resolved.project, &layer.project);
+        if layer.android.sdk_path.is_some() {
+            self.resolved.android = layer.android.clone();
+        }
         apply_gradle(&mut self.resolved, &layer.gradle);
         apply_ui(&mut self.resolved, &layer.ui);
         apply_logcat(&mut self.resolved, &layer.logcat);

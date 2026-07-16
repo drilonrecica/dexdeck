@@ -5,6 +5,7 @@ use std::{
 };
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use dexdeck_android::{Doctor, SdkResolution, SdkResolver};
 use dexdeck_config::{
     ConfigLayer, ConfigLoader, ConfigSources, GradleConfig, ProjectIdentity, StoragePaths,
 };
@@ -31,6 +32,8 @@ use serde::Serialize;
 pub struct Cli {
     #[arg(long, global = true, value_name = "PATH")]
     project: Option<std::path::PathBuf>,
+    #[arg(long, global = true, value_name = "PATH")]
+    sdk: Option<std::path::PathBuf>,
     #[arg(long, global = true, value_name = "GRADLE_PATH")]
     module: Option<String>,
     #[arg(long, global = true, value_name = "NAME")]
@@ -62,6 +65,7 @@ impl fmt::Debug for Cli {
         formatter
             .debug_struct("Cli")
             .field("has_project", &self.project.is_some())
+            .field("has_sdk", &self.sdk.is_some())
             .field("has_module", &self.module.is_some())
             .field("has_variant", &self.variant.is_some())
             .field("has_device", &self.device.is_some())
@@ -290,6 +294,9 @@ pub fn execute(
     if matches!(command, CliCommand::Version) {
         return write_version(cli.format, stdout, stderr);
     }
+    if matches!(command, CliCommand::Doctor) {
+        return execute_doctor(&cli, stdout, stderr);
+    }
 
     if matches!(
         command,
@@ -301,6 +308,58 @@ pub fn execute(
     // Feature handlers are wired in their implementation phases. Parsing and validation are
     // deliberately complete here so scripts can rely on one stable command grammar.
     DexdeckExitCode::Success
+}
+
+fn execute_doctor(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> DexdeckExitCode {
+    let project_root = cli.project.clone().or_else(|| std::env::current_dir().ok());
+    let configuration = cli.config.as_ref().and_then(|path| {
+        ConfigLoader
+            .load(&ConfigSources {
+                explicit: Some(path.clone()),
+                ..ConfigSources::default()
+            })
+            .ok()
+            .and_then(|loaded| loaded.resolved.android.sdk_path)
+    });
+    let resolver = SdkResolver::default();
+    let snapshot = Doctor::inspect(
+        &resolver,
+        resolver.resolve(&SdkResolution {
+            cli: cli.sdk.clone(),
+            configuration,
+            project_root,
+            ..SdkResolution::default()
+        }),
+    );
+    let failed = snapshot
+        .checks
+        .iter()
+        .any(|check| check.status == dexdeck_protocol::DoctorStatus::Error);
+    let result = match cli.format {
+        OutputFormat::Json => serde_json::to_writer(&mut *stdout, &CliEnvelope::new(snapshot))
+            .map_err(io::Error::other)
+            .and_then(|()| writeln!(stdout)),
+        OutputFormat::Human => {
+            let mut result = Ok(());
+            for check in &snapshot.checks {
+                result =
+                    result.and_then(|()| writeln!(stdout, "{:?}: {}", check.status, check.message));
+                if let Some(suggestion) = &check.suggestion {
+                    result = result.and_then(|()| writeln!(stdout, "  {suggestion}"));
+                }
+            }
+            result
+        }
+        OutputFormat::Jsonl => unreachable!("validated snapshot format"),
+    };
+    if result.is_err() {
+        let _ = writeln!(stderr, "dexdeck: failed to write doctor output");
+        DexdeckExitCode::Internal
+    } else if failed {
+        DexdeckExitCode::ToolMissing
+    } else {
+        DexdeckExitCode::Success
+    }
 }
 
 fn execute_project_command(

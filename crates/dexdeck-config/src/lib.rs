@@ -40,7 +40,7 @@ pub use parse::{
 pub use paths::{ProjectPaths, StoragePaths};
 pub use resolve::{ConfigResolver, ResolvedConfig};
 pub use schema::{
-    CommandConfig, ConfigFile, ConfigLayer, EditorConfig, EnvironmentValue, GradleConfig,
-    IntentExtra, KeymapPreset, LaunchMode, LogScope, LogcatConfig, ProfileConfig, ProjectConfig,
-    UiConfig, UnicodeMode,
+    AndroidConfig, CommandConfig, ConfigFile, ConfigLayer, EditorConfig, EnvironmentValue,
+    GradleConfig, IntentExtra, KeymapPreset, LaunchMode, LogScope, LogcatConfig, ProfileConfig,
+    ProjectConfig, UiConfig, UnicodeMode,
 };
