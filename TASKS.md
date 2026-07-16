@@ -155,7 +155,7 @@ tree cancellation works; CLI emits valid schema-v1 output.
 
 ## Phase 2 — Android project discovery and Gradle modeling
 
-### F2.1 Create the Android fixture matrix — P0/High ✅
+### F2.1 Create the Android fixture matrix — P0/High
 
 - Add minimal Kotlin/Groovy, single/multi-module, multi-app, flavors, disabled
   variants, libraries, convention plugins, buildSrc, composites, custom tasks,
@@ -163,74 +163,74 @@ tree cancellation works; CLI emits valid schema-v1 output.
 - Add AGP 8.0.2, 8.13, 9.0.1, and 9.3.0 compatibility lanes.
 - Commit: "test(fixtures): add Android project matrix"
 
-### F2.2 Implement fast filesystem discovery — P0/High ✅
+### F2.2 Implement fast filesystem discovery — P0/High
 
 - Walk upward or honor --project; detect root, wrapper, settings, Android
   signals, and basic SDK/JDK signals without invoking Gradle.
 - Test nested roots, symlinks, both DSLs, ambiguity, and non-Android builds.
 - Commit: "feat(gradle): detect Android project roots"
 
-### F2.3 Build the Java bridge framework — P0/Critical ✅
+### F2.3 Build the Java bridge framework — P0/Critical
 
 - Add Java 17 build, init plugin, model task, adapter interface, version
   detection, explicit JSONL output, structured failures, and completion sentinel.
 - Commit a reproducible JAR/hash and make CI byte-compare rebuilt output.
 - Commit: "feat(gradle): add versioned model bridge"
 
-### F2.4 Implement the AGP 8 adapter — P0/Critical ✅
+### F2.4 Implement the AGP 8 adapter — P0/Critical
 
 - Use public Android Components APIs to model modules, dimensions, flavors,
   build types, variants, IDs, SDKs, tests, tasks, artifacts, and included builds.
 - Verify minimum and upper AGP 8 fixtures.
 - Commit: "feat(gradle): model AGP 8 projects"
 
-### F2.5 Implement the AGP 9 adapter — P0/Critical ✅
+### F2.5 Implement the AGP 9 adapter — P0/Critical
 
 - Use AGP 9 public DSL/Variant APIs without removed legacy interfaces.
 - Produce the same normalized model and test 9.0 plus current 9.3 behavior.
 - Commit: "feat(gradle): model AGP 9 projects"
 
-### F2.6 Embed and invoke the bridge — P0/Critical ✅
+### F2.6 Embed and invoke the bridge — P0/Critical
 
 - Extract to a content-addressed cache atomically, verify hashes, prefer project
   wrappers, require approval for system Gradle, and separate stdout from JSONL.
 - Reject partial output after failure/cancellation.
 - Commit: "feat(gradle): embed and invoke the bridge"
 
-### F2.7 Orchestrate project model refresh — P0/High ✅
+### F2.7 Orchestrate project model refresh — P0/High
 
 - Implement provisional discovery, cache load, async validation, Gradle refresh,
   normalization, cancellation, and explicit freshness states.
 - Preserve the previous snapshot when refresh fails.
 - Commit: "feat(gradle): orchestrate project model refresh"
 
-### F2.8 Cache and fingerprint models — P0/Critical ✅
+### F2.8 Cache and fingerprint models — P0/Critical
 
 - Persist versioned model/fingerprint files atomically.
 - Fingerprint only model inputs using metadata first and content hashes for
   changed files; never scan arbitrary source trees.
 - Commit: "feat(config): cache and fingerprint project models"
 
-### F2.9 Watch model inputs — P1/High ✅
+### F2.9 Watch model inputs — P1/High
 
 - Add cross-platform event watching, debounce, immediate stale status, delayed
   refresh during Gradle work, and valid session selection restoration.
 - Commit: "feat(config): watch project model inputs"
 
-### F2.10 Add explicit degraded mode — P0/High ✅
+### F2.10 Add explicit degraded mode — P0/High
 
 - Handle AGP outside 8–9, bridge incompatibility, unavailable APIs, missing
   wrappers, and configuration failures without claiming full support.
 - Preserve usable cache and allow tasks, manual profiles, ADB, and Logcat.
 - Commit: "feat(gradle): support explicit degraded mode"
 
-### F2.11 Expose project model commands — P1/High ✅
+### F2.11 Expose project model commands — P1/High
 
 - Implement project inspect, modules list, and variants list with deterministic
   human/JSON output, freshness, and degraded status.
 - Commit: "feat(cli): expose project model commands"
 
-### F2.12 Verify the modeling matrix — P0/Critical ✅
+### F2.12 Verify the modeling matrix — P0/Critical
 
 - Test all fixtures, protocol compatibility, corrupt/partial output, cache
   invalidation, bridge cancellation, and unchanged project Git status.
