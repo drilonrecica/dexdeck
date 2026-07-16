@@ -1,5 +1,7 @@
 {
   "schemaVersion": 1,
+  "freshness": "current",
+  "support": "full",
   "project": {
     "root": "/project",
     "build": {

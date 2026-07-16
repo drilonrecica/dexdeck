@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use dexdeck_protocol::{
     AndroidModule, BridgeComplete, BridgeEnvelope, BridgePayload, BridgeProtocolError,
-    BridgeStreamValidator, BuildInfo, CliEnvelope, CliEvent, JobId, JobKind, ModuleKind,
-    ProjectModel, ProjectSnapshot,
+    BridgeStreamValidator, BuildInfo, CliEnvelope, CliEvent, JobId, JobKind, ModelFreshness,
+    ModuleKind, ModulesSnapshot, ProjectModel, ProjectSnapshot, ProjectSupport, VariantsSnapshot,
 };
 
 #[test]
@@ -35,11 +35,40 @@ fn project_snapshot_matches_golden_contract() -> Result<(), serde_json::Error> {
         diagnostics: Vec::new(),
     };
 
-    let actual =
-        serde_json::to_string_pretty(&CliEnvelope::new(ProjectSnapshot { project: model }))?;
+    let actual = serde_json::to_string_pretty(&CliEnvelope::new(ProjectSnapshot {
+        freshness: ModelFreshness::Current,
+        support: ProjectSupport::Full,
+        degraded_reason: None,
+        project: model,
+    }))?;
     assert_eq!(
         format!("{actual}\n"),
         include_str!("golden/project-snapshot.json")
+    );
+    Ok(())
+}
+
+#[test]
+fn list_snapshots_match_golden_contracts() -> Result<(), serde_json::Error> {
+    let modules = serde_json::to_string_pretty(&CliEnvelope::new(ModulesSnapshot {
+        freshness: ModelFreshness::Current,
+        support: ProjectSupport::Full,
+        degraded_reason: None,
+        modules: Vec::new(),
+    }))?;
+    assert_eq!(
+        format!("{modules}\n"),
+        include_str!("golden/modules-snapshot.json")
+    );
+    let variants = serde_json::to_string_pretty(&CliEnvelope::new(VariantsSnapshot {
+        freshness: ModelFreshness::Current,
+        support: ProjectSupport::Full,
+        degraded_reason: None,
+        variants: Vec::new(),
+    }))?;
+    assert_eq!(
+        format!("{variants}\n"),
+        include_str!("golden/variants-snapshot.json")
     );
     Ok(())
 }

@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     AndroidModule, BRIDGE_PROTOCOL_VERSION, BuildInfo, Diagnostic, FlavorDimension, GradleTask,
-    ProductFlavor, Variant,
+    IncludedBuild, ProductFlavor, Variant,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,6 +33,9 @@ impl BridgeEnvelope {
 pub enum BridgePayload {
     Build {
         build: BuildInfo,
+    },
+    IncludedBuild {
+        included_build: IncludedBuild,
     },
     Module {
         module: AndroidModule,

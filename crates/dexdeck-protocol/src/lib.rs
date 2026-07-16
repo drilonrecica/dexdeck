@@ -12,7 +12,9 @@ pub use bridge::{
     BridgeComplete, BridgeEnvelope, BridgePayload, BridgeProtocolError, BridgeStreamValidator,
 };
 pub use cli::{
-    CliEnvelope, CliEvent, ErrorCategory, OperationContext, OperationError, ProjectSnapshot,
+    CliEnvelope, CliEvent, DegradedReason, ErrorCategory, ErrorCode, ModelFreshness, ModuleVariant,
+    ModulesSnapshot, OperationContext, OperationError, ProjectSnapshot, ProjectSupport,
+    VariantsSnapshot,
 };
 pub use diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, SourceLocation};
 pub use job::{JobId, JobKind, JobRecord, JobState};
@@ -28,3 +30,4 @@ pub const CLI_SCHEMA_VERSION: u32 = 1;
 pub const BRIDGE_PROTOCOL_VERSION: u32 = 1;
 pub const CONFIG_SCHEMA_VERSION: u32 = 1;
 pub const CACHE_SCHEMA_VERSION: u32 = 1;
+pub const JOB_HISTORY_SCHEMA_VERSION: u32 = 1;
