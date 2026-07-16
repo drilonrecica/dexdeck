@@ -528,6 +528,10 @@ compact terminals work; exit restores state without stopping external tools.
 - Commit: "chore(release): prepare DexDeck 0.2.0"
 - Create tag v0.2.0 only after every gate passes.
 
+Release-candidate implementation is prepared. Validation and the final
+checkmark remain pending the quality, platform, Android, package, privacy,
+reliability, and Homebrew CI gates on the exact candidate commit.
+
 **Final gate:** every SPECS.md acceptance criterion has an automated test or
 reproducible release check; no P0/P1 task remains; stable packages install and
 complete the Android daily loop; no direct network or telemetry path exists.

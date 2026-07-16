@@ -23,7 +23,8 @@ pub use app::{
     ServiceKind, SubsystemState, SubsystemStatus, UiState,
 };
 pub use custom_command::{
-    CommandPreview, CustomCommandError, CustomCommandService, TrustDecision, TrustFingerprint,
+    CommandPreview, CustomCommandError, CustomCommandService, TRUST_SCHEMA_VERSION, TrustDecision,
+    TrustFingerprint,
 };
 pub use debug_diagnostics::{
     DEFAULT_DEBUG_BYTES, DEFAULT_DEBUG_ENTRIES, DebugDiagnosticError, DebugDiagnostics, DebugEntry,

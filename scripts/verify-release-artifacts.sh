@@ -12,7 +12,9 @@ fi
 for archive in "${archives[@]}"; do
   checksum="$archive.sha256"
   [[ -f "$checksum" ]] || { printf 'missing checksum for %s\n' "$archive" >&2; exit 1; }
-  (cd "$(dirname "$archive")" && sha256sum --check "$(basename "$checksum")")
+  expected=$(awk '{print $1}' "$checksum")
+  actual=$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "$archive")
+  [[ "$actual" == "$expected" ]] || { printf 'checksum mismatch for %s\n' "$archive" >&2; exit 1; }
   if [[ "$archive" == *.tar.gz ]]; then
     listing=$(tar -tzf "$archive")
     details=$(tar -tvzf "$archive")
@@ -20,7 +22,7 @@ for archive in "${archives[@]}"; do
     rg -q '/README.md$' <<<"$listing"
     rg -q '/LICENSE$' <<<"$listing"
     rg -q '/man/man1/dexdeck.1$' <<<"$listing"
-    rg -q '^-rwxr-xr-x .* /dexdeck$' <<<"$details"
+    rg -q '^-rwxr-xr-x .*/dexdeck$' <<<"$details"
   else
     listing=$(unzip -Z1 "$archive")
     rg -q '/dexdeck.exe$' <<<"$listing"

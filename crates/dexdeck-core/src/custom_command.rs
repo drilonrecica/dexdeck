@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{CommandSpec, ProcessResult, ProcessSupervisor, SecretRedactor, SensitiveValue};
 
-const TRUST_SCHEMA_VERSION: u32 = 1;
+pub const TRUST_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrustDecision {

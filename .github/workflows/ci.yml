@@ -184,10 +184,10 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - name: Render reviewed source assets
-        run: bash scripts/render-brand-assets.sh
-      - name: Verify deterministic assets
-        run: git diff --exit-code -- brand
+      - name: Verify reviewed assets and deterministic digests
+        run: |
+          (cd brand && sha256sum --check SHA256SUMS)
+          ! rg '<text|href=|url\(|linearGradient|radialGradient|font-family' brand/*.svg
 
   user-docs:
     name: User and generated documentation
@@ -210,6 +210,22 @@ jobs:
           persist-credentials: false
       - name: Generate deterministic test formula
         run: python3 scripts/generate-homebrew-formula.py --self-test
+
+  release-readiness:
+    name: Release metadata and schema freeze
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.0 --profile minimal
+      - name: Verify release metadata
+        run: bash scripts/verify-release-readiness.sh
+      - name: Freeze schema v1
+        run: cargo test -p dexdeck --test schema_freeze
 
   bridge-reproducibility:
     name: Bridge reproducibility
