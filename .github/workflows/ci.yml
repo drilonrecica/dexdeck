@@ -90,6 +90,69 @@ jobs:
       - name: Check workspace
         run: cargo check --workspace --all-targets
 
+  bridge-reproducibility:
+    name: Bridge reproducibility
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Temurin JDK
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: temurin
+          java-version: 17.0.19+10
+
+      - name: Rebuild tracked bridge
+        run: bash scripts/build-bridge.sh
+
+      - name: Byte-compare bridge artifact
+        run: git diff --exit-code -- bridge/dexdeck-bridge.jar bridge/dexdeck-bridge.jar.sha256
+
+  agp-matrix:
+    name: AGP ${{ matrix.agp }} bridge
+    strategy:
+      fail-fast: false
+      matrix:
+        agp: ["8.0.2", "8.13.0", "9.0.1", "9.3.0"]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Temurin JDK
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: temurin
+          java-version: 17.0.19+10
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.0 --profile minimal
+
+      - name: Cache Cargo and Gradle data
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            target
+          key: agp-${{ matrix.agp }}-${{ hashFiles('Cargo.lock', 'bridge/**', 'crates/dexdeck-test-support/**') }}
+
+      - name: Run executable bridge fixtures
+        env:
+          DEXDECK_AGP_LANE: ${{ matrix.agp }}
+          DEXDECK_REAL_AGP_TESTS: "1"
+        run: cargo test -p dexdeck-gradle --test real_bridge_matrix models_executable_agp_matrix
+
+      - name: Verify fixtures did not modify tracked files
+        run: git diff --exit-code
+
   dco:
     name: DCO
     if: github.event_name == 'pull_request'
