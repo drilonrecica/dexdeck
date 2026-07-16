@@ -27,23 +27,11 @@ gradle.allprojects { project ->
                     observedVariantBuilders.computeIfAbsent(project.path) { [] } << builder
                 }
                 components.onVariants(components.selector().all()) { variant ->
-                    def values = observedVariants.computeIfAbsent(project.path) { [] }
-                    def value = new LinkedHashMap(adapter.modelVariant(variant))
-                    if (variant.hasProperty("productFlavors")) {
-                        def flavors = variant.productFlavors.collect { flavor ->
-                            [dimension: flavor.first.toString(), flavor: flavor.second.toString()]
-                        }.sort { it.dimension }
-                        if (!flavors.isEmpty()) value.flavors = flavors
-                    }
-                    value.tasks = [:]
-                    def capitalized = variant.name.substring(0, 1).toUpperCase(Locale.ROOT) + variant.name.substring(1)
-                    value.tasks.assemble = project.path == ":" ? ":assemble${capitalized}" : "${project.path}:assemble${capitalized}"
-                    if (project.plugins.hasPlugin("com.android.application")) {
-                        value.tasks.bundle = project.path == ":" ? ":bundle${capitalized}" : "${project.path}:bundle${capitalized}"
-                        value.tasks.install = project.path == ":" ? ":install${capitalized}" : "${project.path}:install${capitalized}"
-                    }
-                    value.tasks.lint = project.path == ":" ? ":lint${capitalized}" : "${project.path}:lint${capitalized}"
-                    values << value
+                    observedVariants.computeIfAbsent(project.path) { [] } << [
+                        adapter: adapter,
+                        variant: variant,
+                        application: project.plugins.hasPlugin("com.android.application")
+                    ]
                 }
             }
         }
@@ -153,18 +141,32 @@ gradle.rootProject { root ->
                         }.sort { it.name }
                         if (!buildTypes.isEmpty()) module.buildTypes = buildTypes
                     }
-                    def variants = (observedVariants[project.path] ?: []).sort { it.name }.collect { observed ->
+                    def variants = (observedVariants[project.path] ?: []).collect { observed ->
+                        def variant = observed.variant
+                        def modeled = observed.adapter.modelVariant(variant)
                         def value = new LinkedHashMap()
-                        value.name = observed.name
-                        value.enabled = observed.enabled
-                        value.buildType = observed.buildType
-                        if (observed.flavors != null) value.flavors = observed.flavors
-                        if (observed.applicationId != null) value.applicationId = observed.applicationId.toString()
-                        if (observed.namespace != null) value.namespace = observed.namespace.toString()
-                        if (observed.debuggable != null) value.debuggable = observed.debuggable
-                        value.tasks = observed.tasks
+                        value.name = modeled.name
+                        value.enabled = modeled.enabled
+                        value.buildType = modeled.buildType
+                        if (variant.hasProperty("productFlavors")) {
+                            def flavors = variant.productFlavors.collect { flavor ->
+                                [dimension: flavor.first.toString(), flavor: flavor.second.toString()]
+                            }.sort { it.dimension }
+                            if (!flavors.isEmpty()) value.flavors = flavors
+                        }
+                        if (modeled.applicationId != null) value.applicationId = modeled.applicationId
+                        if (modeled.namespace != null) value.namespace = modeled.namespace
+                        if (modeled.debuggable != null) value.debuggable = modeled.debuggable
+                        value.tasks = [:]
+                        def capitalized = variant.name.substring(0, 1).toUpperCase(Locale.ROOT) + variant.name.substring(1)
+                        value.tasks.assemble = project.path == ":" ? ":assemble${capitalized}" : "${project.path}:assemble${capitalized}"
+                        if (observed.application) {
+                            value.tasks.bundle = project.path == ":" ? ":bundle${capitalized}" : "${project.path}:bundle${capitalized}"
+                            value.tasks.install = project.path == ":" ? ":install${capitalized}" : "${project.path}:install${capitalized}"
+                        }
+                        value.tasks.lint = project.path == ":" ? ":lint${capitalized}" : "${project.path}:lint${capitalized}"
                         value
-                    }
+                    }.sort { it.name }
                     def enabledNames = variants.collect { it.name } as Set
                     (observedVariantBuilders[project.path] ?: []).findAll { builder ->
                         builder.hasProperty("enable") && !builder.enable && !enabledNames.contains(builder.name)

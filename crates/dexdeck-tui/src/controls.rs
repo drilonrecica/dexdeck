@@ -230,8 +230,7 @@ mod tests {
     fn reports_binding_conflicts() {
         let mut map = Keymap::default();
         let chord = KeyChord::new(KeyCode::Char('x'), KeyModifiers::NONE);
-        map.bind(chord.clone(), NamedAction::Help)
-            .expect("first binding");
+        assert!(map.bind(chord.clone(), NamedAction::Help).is_ok());
         assert!(map.bind(chord, NamedAction::Quit).is_err());
     }
 }

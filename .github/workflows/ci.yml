@@ -187,7 +187,7 @@ jobs:
       - name: Verify reviewed assets and deterministic digests
         run: |
           (cd brand && sha256sum --check SHA256SUMS)
-          ! rg '<text|href=|url\(|linearGradient|radialGradient|font-family' brand/*.svg
+          ! grep -E '<text|href=|url\(|linearGradient|radialGradient|font-family' brand/*.svg
 
   user-docs:
     name: User and generated documentation

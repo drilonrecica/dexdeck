@@ -181,9 +181,10 @@ struct XmlFailure {
 struct XmlSkipped {}
 
 fn parse_junit(source: &str) -> Result<Vec<TestCaseResult>, quick_xml::DeError> {
-    let suites = quick_xml::de::from_str::<XmlSuites>(source)
-        .map(|value| value.suites)
-        .or_else(|_| quick_xml::de::from_str::<XmlSuite>(source).map(|suite| vec![suite]))?;
+    let suites = match quick_xml::de::from_str::<XmlSuites>(source) {
+        Ok(value) if !value.suites.is_empty() => value.suites,
+        _ => vec![quick_xml::de::from_str::<XmlSuite>(source)?],
+    };
     Ok(suites
         .into_iter()
         .flat_map(|suite| {

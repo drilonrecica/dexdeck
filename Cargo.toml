@@ -27,7 +27,7 @@ directories = "6"
 insta = "1"
 notify = "8"
 proptest = "1"
-quick-xml = { version = "0.38", features = ["serialize"] }
+quick-xml = { version = "0.41", features = ["serialize"] }
 ratatui = "0.29"
 regex = "1"
 rustix = { version = "1", features = ["fs", "process", "pty", "termios"] }

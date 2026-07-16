@@ -19,7 +19,7 @@ render brand/deckmark-favicon.svg 16x16 brand/deckmark-favicon-16.png
 render brand/deckmark-monochrome-dark.svg 256x256 brand/deckmark-monochrome-dark-256.png
 render brand/deckmark-monochrome-light.svg 256x256 brand/deckmark-monochrome-light-256.png
 
-if rg -n '<text|href=|url\(|linearGradient|radialGradient|font-family' brand/*.svg; then
+if grep -En '<text|href=|url\(|linearGradient|radialGradient|font-family' brand/*.svg; then
   printf 'Deckmark SVGs must contain only local, font-free, flat geometry\n' >&2
   exit 1
 fi
