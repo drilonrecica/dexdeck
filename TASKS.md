@@ -224,7 +224,7 @@ tree cancellation works; CLI emits valid schema-v1 output.
 - Preserve usable cache and allow tasks, manual profiles, ADB, and Logcat.
 - Commit: "feat(gradle): support explicit degraded mode"
 
-### F2.11 Expose project model commands — P1/High
+### F2.11 Expose project model commands — P1/High ✅
 
 - Implement project inspect, modules list, and variants list with deterministic
   human/JSON output, freshness, and degraded status.
