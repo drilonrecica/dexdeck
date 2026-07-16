@@ -26,7 +26,12 @@ tokio-util.workspace = true
 workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
 rustix.workspace = true
+
+[[bench]]
+name = "operational"
+harness = false

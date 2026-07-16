@@ -476,7 +476,7 @@ compact terminals work; exit restores state without stopping external tools.
   and unchanged project Git status.
 - Commit: "test(reliability): cover critical failure modes"
 
-### F7.3 Add reproducible benchmarks — P1/High
+### F7.3 Add reproducible benchmarks — P1/High ✅
 
 - Benchmark cold/warm startup, idle wakeups, input latency, model loading, task
   lists, build output, Logcat, memory bounds, and cancellation with recorded
