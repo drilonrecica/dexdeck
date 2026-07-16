@@ -2,6 +2,7 @@
 
 mod app;
 pub mod brand;
+mod debug_diagnostics;
 mod error;
 mod job;
 mod process;
@@ -11,6 +12,10 @@ mod secret;
 pub use app::{
     Action, AppReducer, AppState, Effect, EffectOutcome, LifecycleState, ModelStatus, ProjectState,
     SubsystemState, SubsystemStatus, UiState,
+};
+pub use debug_diagnostics::{
+    DEFAULT_DEBUG_BYTES, DEFAULT_DEBUG_ENTRIES, DebugDiagnosticError, DebugDiagnostics, DebugEntry,
+    DebugLevel,
 };
 pub use error::DexError;
 pub use job::{

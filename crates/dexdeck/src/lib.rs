@@ -74,6 +74,11 @@ impl Cli {
             ascii: self.ascii,
         })
     }
+
+    #[must_use]
+    pub fn debug_log_path(&self) -> Option<&std::path::Path> {
+        self.debug_log.as_deref()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
