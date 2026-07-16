@@ -170,7 +170,7 @@ tree cancellation works; CLI emits valid schema-v1 output.
 - Test nested roots, symlinks, both DSLs, ambiguity, and non-Android builds.
 - Commit: "feat(gradle): detect Android project roots"
 
-### F2.3 Build the Java bridge framework — P0/Critical
+### F2.3 Build the Java bridge framework — P0/Critical ✅
 
 - Add Java 17 build, init plugin, model task, adapter interface, version
   detection, explicit JSONL output, structured failures, and completion sentinel.
