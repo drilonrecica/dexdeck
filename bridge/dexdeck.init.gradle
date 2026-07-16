@@ -1,0 +1,12 @@
+import dev.dexdeck.bridge.ModelBridge
+
+allprojects {
+    tasks.register("dexdeckModel") {
+        group = "dexdeck"
+        doLast {
+            def output = System.getProperty("dexdeck.output")
+            if (output == null) throw new GradleException("dexdeck.output is required")
+            ModelBridge.writeFailure(file(output).toPath(), "adapter_unavailable", "No compatible adapter produced a model")
+        }
+    }
+}
