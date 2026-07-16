@@ -279,7 +279,7 @@ changes become stale; failure never replaces a valid snapshot.
 - Preserve defaults: replace enabled; downgrade/grant-all/uninstall-first disabled.
 - Commit: "feat(android): implement app lifecycle commands"
 
-### F3.7 Compose explicit run workflows — P0/High
+### F3.7 Compose explicit run workflows — P0/High ✅
 
 - Implement Build, Install, Launch, Run, Rerun, Reinstall, Clean Reinstall, and
   Stop exactly as specified, with cancellation and destructive confirmations.

@@ -9,6 +9,7 @@ mod process;
 mod run_profile;
 mod runtime;
 mod secret;
+mod workflow;
 
 pub use app::{
     Action, AppReducer, AppState, Effect, EffectOutcome, LifecycleState, ModelStatus, ProjectState,
@@ -35,4 +36,8 @@ pub use runtime::{
 pub use secret::{
     REDACTED, SecretError, SecretRedactor, SensitiveValue, StreamingSecretRedactor,
     resolve_environment_references,
+};
+pub use workflow::{
+    Workflow, WorkflowError, WorkflowEvent, WorkflowExecutor, WorkflowRequest, WorkflowStep,
+    WorkflowStepFuture, WorkflowStepRunner,
 };

@@ -16,7 +16,7 @@ pub use bridge::{
 pub use cli::{
     CliEnvelope, CliEvent, DegradedReason, ErrorCategory, ErrorCode, ModelFreshness, ModuleVariant,
     ModulesSnapshot, OperationContext, OperationError, ProjectSnapshot, ProjectSupport,
-    VariantsSnapshot,
+    VariantsSnapshot, WorkflowStepData,
 };
 pub use diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, SourceLocation};
 pub use job::{JobId, JobKind, JobRecord, JobState};

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AndroidModule, CLI_SCHEMA_VERSION, Diagnostic, JobId, JobKind, JobRecord, LogRecord,
+    AndroidModule, CLI_SCHEMA_VERSION, Diagnostic, JobId, JobKind, JobRecord, JobState, LogRecord,
     ProjectModel, TestRunResult, Variant,
 };
 
@@ -113,6 +113,10 @@ pub enum CliEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         total: Option<u64>,
     },
+    WorkflowStep {
+        job_id: JobId,
+        step: WorkflowStepData,
+    },
     Output {
         job_id: JobId,
         stream: String,
@@ -135,6 +139,15 @@ pub enum CliEvent {
     Error {
         error: OperationError,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowStepData {
+    pub index: u32,
+    pub total: u32,
+    pub name: String,
+    pub state: JobState,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

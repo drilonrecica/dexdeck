@@ -13,9 +13,9 @@
     "includedBuilds": [],
     "modules": [
       {
-      "path": ":app",
-      "buildId": "root",
-      "projectDirectory": "/project/app",
+        "path": ":app",
+        "buildId": "root",
+        "projectDirectory": "/project/app",
         "kind": "application",
         "namespace": "com.example.app",
         "compileSdk": 37,
