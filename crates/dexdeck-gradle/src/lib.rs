@@ -11,6 +11,7 @@ mod refresh;
 mod runner;
 mod service;
 mod task_runner;
+mod test_runner;
 
 pub use agp8::Agp8ModelBuilder;
 pub use agp9::Agp9ModelBuilder;
@@ -35,4 +36,7 @@ pub use service::{
 pub use task_runner::{
     GradleArgumentLayers, GradleOutput, GradleOutputStream, GradleRunError, GradleRunRequest,
     GradleTaskRunner, validate_gradle_arguments,
+};
+pub use test_runner::{
+    AndroidTestKind, AndroidTestRequest, AndroidTestRunner, ResolvedTestInvocation, TestRunError,
 };

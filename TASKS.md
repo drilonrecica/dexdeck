@@ -364,7 +364,7 @@ all processes; memory is bounded; no automatic disk writes occur.
 
 ## Phase 5 — Tests, diagnostics, and source navigation
 
-### F5.1 Invoke Android test targets — P0/High
+### F5.1 Invoke Android test targets — P0/High ✅
 
 - Support local task/module/class/method and instrumentation
   module/package/class/method selection using standard Gradle mechanisms.
