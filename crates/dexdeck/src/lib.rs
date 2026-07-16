@@ -386,7 +386,7 @@ pub fn execute(
             | CliCommand::Uninstall
             | CliCommand::ClearData
     ) {
-        return execute_application_command(&cli, command, stdout, stderr);
+        return execute_application_command(&cli, command, terminal, stdout, stderr);
     }
     if let CliCommand::Command(arguments) = command {
         return execute_custom_command(&cli, arguments, terminal, stdout, stderr);
@@ -680,9 +680,37 @@ fn load_operation_project(cli: &Cli) -> Result<OperationProject, String> {
     })
 }
 
+fn confirm_operation(
+    cli: &Cli,
+    command: &CliCommand,
+    terminal: TerminalCapabilities,
+    stderr: &mut dyn Write,
+) -> bool {
+    if cli.format != OutputFormat::Human
+        || !terminal.stdin
+        || !terminal.stderr
+        || !io::stdin().is_terminal()
+    {
+        return false;
+    }
+    let operation = match command {
+        CliCommand::CleanReinstall(_) => "clean reinstall",
+        CliCommand::Uninstall => "uninstall",
+        CliCommand::ClearData => "clear application data",
+        _ => "operate on a release or non-debuggable build",
+    };
+    let _ = write!(stderr, "Confirm {operation}? [y/N] ");
+    let _ = stderr.flush();
+    let mut answer = String::new();
+    io::stdin()
+        .read_line(&mut answer)
+        .is_ok_and(|_| matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes"))
+}
+
 fn execute_application_command(
     cli: &Cli,
     command: &CliCommand,
+    terminal: TerminalCapabilities,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> DexdeckExitCode {
@@ -776,13 +804,16 @@ fn execute_application_command(
         command,
         CliCommand::CleanReinstall(_) | CliCommand::Uninstall | CliCommand::ClearData
     );
-    if (destructive || profile.release_confirmation_required) && !cli.yes {
+    if (destructive || profile.release_confirmation_required)
+        && !cli.yes
+        && !confirm_operation(cli, command, terminal, stderr)
+    {
         return write_android_error(
             cli,
             stderr,
             DexdeckExitCode::InvalidUsage,
             ErrorCode::ConfirmationRequired,
-            "operation requires confirmation; rerun with --yes",
+            "operation requires interactive confirmation or --yes",
         );
     }
     let kind = match command {
