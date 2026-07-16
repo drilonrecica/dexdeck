@@ -8,7 +8,7 @@ use std::{
 };
 
 use tokio::{
-    io::{AsyncRead, AsyncReadExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     process::Command,
     task::JoinHandle,
 };
@@ -144,12 +144,20 @@ impl ProcessSupervisor {
         force_cancel: CancellationToken,
     ) -> Result<ProcessResult, ProcessError> {
         let mut command = self.command(spec);
-        platform::configure(&mut command);
+        let authorization = platform::configure(&mut command, spec)?;
         let mut child = command.spawn().map_err(|source| ProcessError::Spawn {
             program: spec.program.clone(),
             source,
         })?;
         let process_tree = platform::ProcessTree::attach(&child)?;
+        if let Some(authorization) = authorization {
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or(ProcessError::MissingPipe("helper stdin"))?;
+            stdin.write_all(&authorization).await?;
+            stdin.shutdown().await?;
+        }
 
         let stdout = child
             .stdout
@@ -287,8 +295,12 @@ mod platform {
         process_group: Pid,
     }
 
-    pub fn configure(command: &mut Command) {
+    pub fn configure(
+        command: &mut Command,
+        _spec: &super::CommandSpec,
+    ) -> Result<Option<Vec<u8>>, ProcessError> {
         command.process_group(0);
+        Ok(None)
     }
 
     impl ProcessTree {
@@ -328,8 +340,9 @@ mod platform {
 
 #[cfg(windows)]
 mod platform {
-    use std::{ffi::c_void, mem::size_of, ptr};
+    use std::{ffi::c_void, mem::size_of, os::windows::ffi::OsStrExt, process::Stdio, ptr};
 
+    use serde::{Deserialize, Serialize};
     use tokio::process::{Child, Command};
     use windows_sys::Win32::{
         Foundation::{CloseHandle, HANDLE},
@@ -344,7 +357,16 @@ mod platform {
         },
     };
 
-    use super::ProcessError;
+    use super::{CommandSpec, ProcessError};
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct HelperCommand {
+        program: Vec<u16>,
+        arguments: Vec<Vec<u16>>,
+        working_directory: Vec<u16>,
+        environment: Vec<(Vec<u16>, Vec<u16>)>,
+        inherit_environment: bool,
+    }
 
     #[derive(Debug)]
     pub struct ProcessTree {
@@ -352,8 +374,87 @@ mod platform {
         process_group: u32,
     }
 
-    pub fn configure(command: &mut Command) {
-        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    pub fn configure(
+        command: &mut Command,
+        spec: &CommandSpec,
+    ) -> Result<Option<Vec<u8>>, ProcessError> {
+        *command = Command::new(std::env::current_exe().map_err(ProcessError::Io)?);
+        command
+            .arg("--dexdeck-internal-process-helper")
+            .current_dir(&spec.working_directory)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .creation_flags(CREATE_NEW_PROCESS_GROUP);
+        let payload = HelperCommand {
+            program: spec.program.as_os_str().encode_wide().collect(),
+            arguments: spec
+                .arguments
+                .iter()
+                .map(|value| value.encode_wide().collect())
+                .collect(),
+            working_directory: spec.working_directory.as_os_str().encode_wide().collect(),
+            environment: spec
+                .environment
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.encode_wide().collect(),
+                        value.expose_os().encode_wide().collect(),
+                    )
+                })
+                .collect(),
+            inherit_environment: spec.inherit_environment,
+        };
+        serde_json::to_vec(&payload)
+            .map(Some)
+            .map_err(|error| ProcessError::Io(std::io::Error::other(error)))
+    }
+
+    pub fn run_helper() -> i32 {
+        use std::{ffi::OsString, io::Read, os::windows::ffi::OsStringExt, process::Command};
+
+        let mut input = Vec::new();
+        if let Err(error) = std::io::stdin().read_to_end(&mut input) {
+            eprintln!("dexdeck process helper authorization failed: {error}");
+            return 8;
+        }
+        let payload = match serde_json::from_slice::<HelperCommand>(&input) {
+            Ok(payload) => payload,
+            Err(error) => {
+                eprintln!("dexdeck process helper payload is invalid: {error}");
+                return 8;
+            }
+        };
+        let mut command = Command::new(OsString::from_wide(&payload.program));
+        command
+            .args(
+                payload
+                    .arguments
+                    .iter()
+                    .map(|value| OsString::from_wide(value)),
+            )
+            .current_dir(OsString::from_wide(&payload.working_directory))
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        if !payload.inherit_environment {
+            command.env_clear();
+        }
+        command.envs(
+            payload
+                .environment
+                .iter()
+                .map(|(name, value)| (OsString::from_wide(name), OsString::from_wide(value))),
+        );
+        match command.status() {
+            Ok(status) => status.code().unwrap_or(1),
+            Err(error) => {
+                eprintln!("dexdeck process helper could not start child: {error}");
+                8
+            }
+        }
     }
 
     impl ProcessTree {
@@ -418,6 +519,12 @@ mod platform {
             unsafe { CloseHandle(self.job as HANDLE) };
         }
     }
+}
+
+#[cfg(windows)]
+#[doc(hidden)]
+pub fn run_windows_process_helper() -> i32 {
+    platform::run_helper()
 }
 
 #[cfg(test)]

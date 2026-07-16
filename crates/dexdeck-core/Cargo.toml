@@ -14,6 +14,7 @@ dexdeck-config = { version = "0.2.0", path = "../dexdeck-config" }
 dexdeck-protocol = { version = "0.2.0", path = "../dexdeck-protocol" }
 thiserror.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -26,7 +27,6 @@ windows-sys.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-serde_json.workspace = true
 tempfile.workspace = true
 
 [lints]

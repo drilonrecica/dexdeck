@@ -13,6 +13,12 @@ use dexdeck_core::{
 };
 
 fn main() -> ExitCode {
+    #[cfg(windows)]
+    if std::env::args_os().nth(1).as_deref()
+        == Some(std::ffi::OsStr::new("--dexdeck-internal-process-helper"))
+    {
+        std::process::exit(dexdeck_core::run_windows_process_helper());
+    }
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => {

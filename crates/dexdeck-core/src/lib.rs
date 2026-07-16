@@ -28,6 +28,8 @@ pub use job::{
     CancellationDirective, DEFAULT_JOB_OUTPUT_BYTES, JOB_HISTORY_LIMIT, Job, JobFinish, JobRequest,
     JobSchedule, JobScheduler, JobSchedulerError, OutputBuffer,
 };
+#[cfg(windows)]
+pub use process::run_windows_process_helper;
 pub use process::{CommandSpec, ProcessError, ProcessResult, ProcessSupervisor, TerminationReason};
 pub use run_profile::{
     LaunchRequest, ResolvedRunProfile, RunProfileError, RunProfileResolver, RunProfileSelection,
