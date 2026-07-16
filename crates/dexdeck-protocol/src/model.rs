@@ -69,6 +69,8 @@ pub enum ModuleKind {
 pub struct AndroidModule {
     pub path: String,
     pub build_id: String,
+    #[serde(default)]
+    pub project_directory: PathBuf,
     pub kind: ModuleKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,

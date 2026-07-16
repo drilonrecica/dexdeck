@@ -125,6 +125,7 @@ gradle.rootProject { root ->
                     def module = new LinkedHashMap()
                     module.path = project.path
                     module.buildId = "root"
+                    module.projectDirectory = project.projectDir.canonicalPath
                     module.kind = project.plugins.hasPlugin("com.android.application") ? "application" : "library"
                     if (android?.hasProperty("namespace") && android.namespace != null) module.namespace = android.namespace.toString()
                     if (android?.hasProperty("compileSdk") && android.compileSdk != null) {

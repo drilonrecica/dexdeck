@@ -272,7 +272,7 @@ changes become stale; failure never replaces a valid snapshot.
   environment references with validation and confirmation rules.
 - Commit: "feat(core): resolve run profiles"
 
-### F3.6 Implement app lifecycle commands — P0/Critical
+### F3.6 Implement app lifecycle commands — P0/Critical ✅
 
 - Add assemble/install selection, artifact discovery, split APK support, package
   and component resolution, deep links, force-stop, uninstall, and clear data.

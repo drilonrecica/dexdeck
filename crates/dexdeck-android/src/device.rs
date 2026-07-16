@@ -55,6 +55,10 @@ impl AdbClient {
         Ok(())
     }
 
+    pub async fn command(&self, arguments: &[String]) -> Result<String, AdbError> {
+        self.run(arguments.iter().map(String::as_str)).await
+    }
+
     async fn run<I, S>(&self, arguments: I) -> Result<String, AdbError>
     where
         I: IntoIterator<Item = S>,

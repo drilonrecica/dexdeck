@@ -253,6 +253,7 @@ mod tests {
         AndroidModule {
             path: ":app".into(),
             build_id: "root".into(),
+            project_directory: PathBuf::from("/project/app"),
             kind: ModuleKind::Application,
             namespace: None,
             compile_sdk: None,

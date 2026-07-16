@@ -202,6 +202,7 @@ mod tests {
             modules: vec![AndroidModule {
                 path: ":app".into(),
                 build_id: "main".into(),
+                project_directory: PathBuf::from("root/app"),
                 kind: ModuleKind::Application,
                 namespace: None,
                 compile_sdk: None,

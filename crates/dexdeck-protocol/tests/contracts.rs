@@ -21,6 +21,7 @@ fn project_snapshot_matches_golden_contract() -> Result<(), serde_json::Error> {
         modules: vec![AndroidModule {
             path: ":app".into(),
             build_id: "root".into(),
+            project_directory: PathBuf::from("/project/app"),
             kind: ModuleKind::Application,
             namespace: Some("com.example.app".into()),
             compile_sdk: Some(37),
