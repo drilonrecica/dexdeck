@@ -1,7 +1,7 @@
 #![cfg(unix)]
 
 use std::{
-    ffi::OsStr,
+    ffi::{CString, OsStr},
     fs::{File, OpenOptions},
     io::{Read, Write},
     os::unix::{ffi::OsStrExt, process::CommandExt},
@@ -36,13 +36,13 @@ fn verify(mode: Mode) -> Result<(), Box<dyn std::error::Error>> {
     grantpt(&master)?;
     unlockpt(&master)?;
     let name = ptsname(&master, Vec::new())?;
+    let slave_name = CString::new(name.to_bytes())?;
     let slave = OpenOptions::new()
         .read(true)
         .write(true)
         .open(OsStr::from_bytes(name.to_bytes()))?;
     let before = tcgetattr(&slave)?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_dexdeck"));
-    let controlling_terminal = slave.try_clone()?;
     command
         .arg("--no-color")
         .arg("--ascii")
@@ -52,7 +52,22 @@ fn verify(mode: Mode) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
         command.pre_exec(move || {
             rustix::process::setsid().map_err(rustix_error)?;
-            rustix::process::ioctl_tiocsctty(&controlling_terminal).map_err(rustix_error)?;
+            // A session leader acquires a controlling terminal by opening the
+            // slave. This works on both Linux and macOS; TIOCSCTTY does not.
+            let terminal = libc::open(slave_name.as_ptr(), libc::O_RDWR);
+            if terminal == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            for descriptor in [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+                if libc::dup2(terminal, descriptor) == -1 {
+                    let error = std::io::Error::last_os_error();
+                    libc::close(terminal);
+                    return Err(error);
+                }
+            }
+            if terminal > libc::STDERR_FILENO {
+                libc::close(terminal);
+            }
             Ok(())
         });
     }

@@ -4,16 +4,48 @@ set -euo pipefail
 : "${ANDROID_HOME:=${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
 export ANDROID_HOME ANDROID_SDK_ROOT="$ANDROID_HOME"
 
-image="system-images;android-35;google_apis;x86_64"
-sdkmanager --install "platform-tools" "emulator" "$image"
-printf 'no\n' | avdmanager create avd --force --name dexdeck-ci --package "$image"
-emulator -avd dexdeck-ci -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect &
-emulator_pid=$!
-trap 'kill "$emulator_pid" 2>/dev/null || true; adb kill-server 2>/dev/null || true' EXIT
+find_sdk_tool() {
+  local name=$1
+  shift
+  local candidate
+  for candidate in "$@"; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+  command -v "$name" 2>/dev/null || {
+    printf 'Android SDK tool not found: %s\n' "$name" >&2
+    return 1
+  }
+}
 
-adb wait-for-device
-timeout 600 bash -c 'until [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" == 1 ]]; do sleep 2; done'
-adb shell input keyevent 82
+sdkmanager=$(find_sdk_tool sdkmanager \
+  "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+  "$ANDROID_HOME/cmdline-tools/bin/sdkmanager")
+avdmanager=$(find_sdk_tool avdmanager \
+  "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" \
+  "$ANDROID_HOME/cmdline-tools/bin/avdmanager")
+
+image="system-images;android-35;google_apis;x86_64"
+"$sdkmanager" --install "platform-tools" "emulator" "$image"
+adb=$(find_sdk_tool adb "$ANDROID_HOME/platform-tools/adb")
+emulator=$(find_sdk_tool emulator "$ANDROID_HOME/emulator/emulator")
+printf 'no\n' | "$avdmanager" create avd --force --name dexdeck-ci --package "$image"
+"$emulator" -avd dexdeck-ci -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect &
+emulator_pid=$!
+trap 'kill "$emulator_pid" 2>/dev/null || true; "$adb" kill-server 2>/dev/null || true' EXIT
+
+"$adb" wait-for-device
+deadline=$((SECONDS + 600))
+until [[ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" == 1 ]]; do
+  if ((SECONDS >= deadline)); then
+    printf 'Android emulator did not finish booting within 600 seconds\n' >&2
+    exit 1
+  fi
+  sleep 2
+done
+"$adb" shell input keyevent 82
 
 fixture_root="$RUNNER_TEMP/dexdeck-android-fixture"
 project=$(cargo run -q -p dexdeck-test-support --bin write_android_fixture -- "$fixture_root")

@@ -392,6 +392,7 @@ dependencies = [
  "dexdeck-gradle",
  "dexdeck-protocol",
  "dexdeck-tui",
+ "libc",
  "rustix 1.1.4",
  "serde",
  "serde_json",

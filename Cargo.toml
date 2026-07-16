@@ -25,6 +25,7 @@ criterion = "0.5"
 crossterm = "0.28"
 directories = "6"
 insta = "1"
+libc = "0.2"
 notify = "8"
 proptest = "1"
 quick-xml = { version = "0.41", features = ["serialize"] }
