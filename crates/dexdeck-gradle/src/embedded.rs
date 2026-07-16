@@ -1,6 +1,7 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
 use dexdeck_protocol::{BridgeEnvelope, BridgeStreamValidator};
@@ -9,6 +10,17 @@ use thiserror::Error;
 
 const JAR: &[u8] = include_bytes!("../../../bridge/dexdeck-bridge.jar");
 const INIT: &[u8] = include_bytes!("../../../bridge/dexdeck.init.gradle");
+
+#[must_use]
+pub fn embedded_bridge_hash() -> &'static str {
+    static HASH: OnceLock<String> = OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut digest = Sha256::new();
+        digest.update(JAR);
+        digest.update(INIT);
+        format!("{:x}", digest.finalize())
+    })
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExtractedBridge {
@@ -28,8 +40,8 @@ pub enum EmbeddedBridgeError {
 }
 
 pub fn extract_bridge(cache: &Path) -> Result<ExtractedBridge, EmbeddedBridgeError> {
-    let hash = format!("{:x}", Sha256::digest(JAR));
-    let directory = cache.join(&hash);
+    let hash = embedded_bridge_hash();
+    let directory = cache.join(hash);
     fs::create_dir_all(&directory)?;
     let jar = directory.join("dexdeck-bridge.jar");
     let init_script = directory.join("dexdeck.init.gradle");

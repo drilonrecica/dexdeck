@@ -8,8 +8,10 @@ use thiserror::Error;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectDiscovery {
     pub root: PathBuf,
+    pub alternative_roots: Vec<PathBuf>,
     pub settings_file: Option<PathBuf>,
     pub wrapper: Option<PathBuf>,
+    pub wrapper_issue: Option<String>,
     pub android_signals: Vec<PathBuf>,
     pub sdk_hint: Option<PathBuf>,
     pub java_home: Option<PathBuf>,
@@ -33,6 +35,8 @@ pub enum DiscoveryError {
     Missing(PathBuf),
     #[error("no Gradle project found from {0}")]
     NotGradle(PathBuf),
+    #[error("Gradle project is not an Android build: {0}")]
+    NotAndroid(PathBuf),
     #[error("failed to inspect {path}: {source}")]
     Io {
         path: PathBuf,
@@ -60,10 +64,16 @@ pub fn discover_project(start: &Path, explicit: bool) -> Result<ProjectDiscovery
     } else {
         Box::new(first.ancestors())
     };
-    for candidate in candidates {
-        if is_gradle_root(candidate) {
-            return inspect(candidate);
+    let roots = candidates
+        .filter(|candidate| is_gradle_root(candidate))
+        .collect::<Vec<_>>();
+    if let Some((selected, alternatives)) = roots.split_first() {
+        let mut discovery = inspect(selected)?;
+        if !discovery.is_android() {
+            return Err(DiscoveryError::NotAndroid(discovery.root));
         }
+        discovery.alternative_roots = alternatives.iter().map(|path| path.to_path_buf()).collect();
+        return Ok(discovery);
     }
     Err(DiscoveryError::NotGradle(start))
 }
@@ -90,25 +100,101 @@ fn inspect(root: &Path) -> Result<ProjectDiscovery, DiscoveryError> {
     } else {
         first_file(root, &["gradlew", "gradlew.bat"])
     };
+    let wrapper_issue = validate_wrapper(root, wrapper.as_deref());
     let mut android_signals = Vec::new();
     collect_named(root, "AndroidManifest.xml", 5, &mut android_signals)?;
-    for name in ["build.gradle.kts", "build.gradle"] {
-        let file = root.join(name);
-        if contains_android_plugin(&file)? {
-            android_signals.push(file);
-        }
-    }
+    collect_android_build_scripts(root, 6, &mut android_signals)?;
+    android_signals.sort();
+    android_signals.dedup();
     let sdk_hint = read_sdk_dir(&root.join("local.properties"))
         .or_else(|| env::var_os("ANDROID_HOME").map(PathBuf::from))
         .or_else(|| env::var_os("ANDROID_SDK_ROOT").map(PathBuf::from));
     Ok(ProjectDiscovery {
         root: root.to_path_buf(),
+        alternative_roots: Vec::new(),
         settings_file,
         wrapper,
+        wrapper_issue,
         android_signals,
         sdk_hint,
         java_home: env::var_os("JAVA_HOME").map(PathBuf::from),
     })
+}
+
+fn validate_wrapper(root: &Path, wrapper: Option<&Path>) -> Option<String> {
+    let wrapper = wrapper?;
+    #[cfg(not(unix))]
+    let _ = wrapper;
+    let properties = root.join("gradle/wrapper/gradle-wrapper.properties");
+    let source = match fs::read_to_string(&properties) {
+        Ok(source) => source,
+        Err(error) => return Some(format!("cannot read {}: {error}", properties.display())),
+    };
+    if !source
+        .lines()
+        .any(|line| line.trim_start().starts_with("distributionUrl="))
+    {
+        return Some(format!("{} has no distributionUrl", properties.display()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if wrapper.file_name().and_then(|name| name.to_str()) == Some("gradlew")
+            && fs::metadata(wrapper)
+                .ok()
+                .is_some_and(|metadata| metadata.permissions().mode() & 0o111 == 0)
+        {
+            return Some(format!("{} is not executable", wrapper.display()));
+        }
+        if fs::read_to_string(wrapper)
+            .ok()
+            .is_none_or(|source| !source.starts_with("#!"))
+        {
+            return Some(format!(
+                "{} is not a valid wrapper script",
+                wrapper.display()
+            ));
+        }
+    }
+    None
+}
+
+fn collect_android_build_scripts(
+    root: &Path,
+    depth: usize,
+    found: &mut Vec<PathBuf>,
+) -> Result<(), DiscoveryError> {
+    if depth == 0 {
+        return Ok(());
+    }
+    for entry in fs::read_dir(root).map_err(|source| DiscoveryError::Io {
+        path: root.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| DiscoveryError::Io {
+            path: root.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        if path.is_symlink() {
+            continue;
+        }
+        if path.is_dir() {
+            if !matches!(
+                path.file_name().and_then(|v| v.to_str()),
+                Some(".git" | ".gradle" | "build" | "src")
+            ) {
+                collect_android_build_scripts(&path, depth - 1, found)?;
+            }
+        } else if matches!(
+            path.file_name().and_then(|v| v.to_str()),
+            Some("build.gradle" | "build.gradle.kts")
+        ) && contains_android_plugin(&path)?
+        {
+            found.push(path);
+        }
+    }
+    Ok(())
 }
 
 fn first_file(root: &Path, names: &[&str]) -> Option<PathBuf> {
@@ -197,6 +283,40 @@ mod tests {
     }
 
     #[test]
+    fn rejects_non_android_gradle_builds() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::write(temp.path().join("settings.gradle.kts"), "").expect("settings");
+        assert!(matches!(
+            discover_project(temp.path(), true),
+            Err(DiscoveryError::NotAndroid(_))
+        ));
+    }
+
+    #[test]
+    fn reports_ambiguous_parent_roots() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::write(temp.path().join("settings.gradle"), "").expect("settings");
+        fs::write(
+            temp.path().join("build.gradle"),
+            "plugins { id 'com.android.application' }",
+        )
+        .expect("build");
+        let nested = temp.path().join("nested");
+        fs::create_dir(&nested).expect("nested");
+        fs::write(nested.join("settings.gradle"), "").expect("settings");
+        fs::write(
+            nested.join("build.gradle"),
+            "plugins { id 'com.android.library' }",
+        )
+        .expect("build");
+        let discovery = discover_project(&nested, false).expect("discovery");
+        assert_eq!(
+            discovery.alternative_roots,
+            [temp.path().canonicalize().expect("canonical")]
+        );
+    }
+
+    #[test]
     fn explicit_non_root_is_not_walked_up() {
         let temp = tempfile::tempdir().expect("tempdir");
         fs::write(temp.path().join("settings.gradle"), "").expect("settings");
@@ -215,6 +335,11 @@ mod tests {
         let root = temp.path().join("root");
         fs::create_dir(&root).expect("root");
         fs::write(root.join("settings.gradle"), "").expect("settings");
+        fs::write(
+            root.join("build.gradle"),
+            "plugins { id 'com.android.application' }",
+        )
+        .expect("build");
         let link = temp.path().join("link");
         symlink(&root, &link).expect("symlink");
         assert_eq!(

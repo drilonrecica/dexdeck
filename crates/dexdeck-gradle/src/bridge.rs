@@ -4,6 +4,7 @@ use thiserror::Error;
 
 pub const MODEL_TASK: &str = "dexdeckModel";
 pub const OUTPUT_PROPERTY: &str = "dexdeck.output";
+pub const JAR_PROPERTY: &str = "dexdeck.bridgeJar";
 pub const BRIDGE_JAVA_VERSION: u8 = 17;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,9 +28,17 @@ impl BridgeInvocation {
             arguments: vec![
                 "--init-script".into(),
                 init_script.display().to_string(),
-                MODEL_TASK.into(),
+                format!(
+                    "-D{JAR_PROPERTY}={}",
+                    init_script
+                        .parent()
+                        .unwrap_or(Path::new("."))
+                        .join("dexdeck-bridge.jar")
+                        .display()
+                ),
                 format!("-D{OUTPUT_PROPERTY}={}", output.display()),
                 "--console=plain".into(),
+                MODEL_TASK.into(),
             ],
             output: output.to_path_buf(),
         }

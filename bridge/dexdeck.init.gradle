@@ -1,12 +1,223 @@
+initscript {
+    def bridgeJar = System.getProperty("dexdeck.bridgeJar")
+    if (bridgeJar == null) throw new GradleException("dexdeck.bridgeJar is required")
+    dependencies { classpath files(bridgeJar) }
+}
+
+import groovy.json.JsonOutput
 import dev.dexdeck.bridge.ModelBridge
 
-allprojects {
-    tasks.register("dexdeckModel") {
+def observedVariants = Collections.synchronizedMap([:])
+def observedVariantBuilders = Collections.synchronizedMap([:])
+
+gradle.allprojects { project ->
+    ["com.android.application", "com.android.library"].each { pluginId ->
+        project.pluginManager.withPlugin(pluginId) {
+            def components = project.extensions.findByName("androidComponents")
+            if (components != null) {
+                components.beforeVariants(components.selector().all()) { builder ->
+                    observedVariantBuilders.computeIfAbsent(project.path) { [] } << builder
+                }
+                components.onVariants(components.selector().all()) { variant ->
+                    def values = observedVariants.computeIfAbsent(project.path) { [] }
+                    def value = [
+                        name: variant.name,
+                        enabled: true,
+                        buildType: variant.buildType ?: ""
+                    ]
+                    if (variant.hasProperty("productFlavors")) {
+                        def flavors = variant.productFlavors.collect { flavor ->
+                            [dimension: flavor.first.toString(), flavor: flavor.second.toString()]
+                        }.sort { it.dimension }
+                        if (!flavors.isEmpty()) value.flavors = flavors
+                    }
+                    if (variant.hasProperty("applicationId")) {
+                        value.__applicationId = variant.getApplicationId()
+                    }
+                    if (variant.hasProperty("namespace")) {
+                        value.__namespace = variant.getNamespace()
+                    }
+                    value.tasks = [:]
+                    def capitalized = variant.name.substring(0, 1).toUpperCase(Locale.ROOT) + variant.name.substring(1)
+                    value.tasks.assemble = project.path == ":" ? ":assemble${capitalized}" : "${project.path}:assemble${capitalized}"
+                    if (project.plugins.hasPlugin("com.android.application")) {
+                        value.tasks.bundle = project.path == ":" ? ":bundle${capitalized}" : "${project.path}:bundle${capitalized}"
+                        value.tasks.install = project.path == ":" ? ":install${capitalized}" : "${project.path}:install${capitalized}"
+                    }
+                    value.tasks.lint = project.path == ":" ? ":lint${capitalized}" : "${project.path}:lint${capitalized}"
+                    values << value
+                }
+            }
+        }
+    }
+}
+
+gradle.rootProject { root ->
+    root.tasks.register("dexdeckModel") {
         group = "dexdeck"
         doLast {
-            def output = System.getProperty("dexdeck.output")
-            if (output == null) throw new GradleException("dexdeck.output is required")
-            ModelBridge.writeFailure(file(output).toPath(), "adapter_unavailable", "No compatible adapter produced a model")
+            def outputValue = System.getProperty("dexdeck.output")
+            if (outputValue == null) throw new GradleException("dexdeck.output is required")
+            def output = file(outputValue).toPath()
+            try {
+                def androidProjects = root.allprojects.findAll { project ->
+                    project.plugins.hasPlugin("com.android.application") ||
+                        project.plugins.hasPlugin("com.android.library")
+                }.sort { it.path }
+
+                def agpVersion = null
+                if (!androidProjects.isEmpty()) {
+                    try {
+                        agpVersion = Class.forName("com.android.Version")
+                            .getField("ANDROID_GRADLE_PLUGIN_VERSION").get(null).toString()
+                    } catch (ReflectiveOperationException ignored) {
+                        // Older/future plugins may not expose the compatibility constant.
+                    }
+                }
+                if (agpVersion == null) {
+                    agpVersion = androidProjects.collectMany { project ->
+                        ["com.android.application", "com.android.library"].collect { pluginId ->
+                            def plugin = project.plugins.findPlugin(pluginId)
+                            if (plugin == null) return null
+                            def version = plugin.class.package?.implementationVersion
+                            if (version == null) {
+                                version = plugin.class.module?.descriptor?.rawVersion()?.orElse(null)
+                            }
+                            if (version == null) {
+                                def location = plugin.class.protectionDomain?.codeSource?.location?.toString()
+                                def matcher = location =~ /com\.android\.tools\.build\/gradle\/([^\/]+)\//
+                                if (matcher.find()) version = matcher.group(1)
+                                if (version == null) {
+                                    matcher = location =~ /gradle-([0-9]+(?:\.[0-9]+){1,2}[^\/]*)\.jar/
+                                    if (matcher.find()) version = matcher.group(1)
+                                }
+                            }
+                            version
+                        }
+                    }.find { it != null }
+                }
+                if (agpVersion == null) {
+                    def versionPattern = ~/com\.android\.(?:application|library)[^\n]*?version\s*[\(\s]*["']([^"']+)/
+                    agpVersion = [
+                        new File(root.rootDir, "build.gradle.kts"),
+                        new File(root.rootDir, "build.gradle"),
+                        new File(root.rootDir, "settings.gradle.kts"),
+                        new File(root.rootDir, "settings.gradle")
+                    ].findResult { script ->
+                        if (!script.isFile()) return null
+                        def matcher = script.text =~ versionPattern
+                        matcher.find() ? matcher.group(1) : null
+                    }
+                }
+
+                def build = new LinkedHashMap()
+                build.root = root.rootDir.canonicalPath
+                build.gradleVersion = gradle.gradleVersion
+                if (agpVersion != null) build.agpVersion = agpVersion
+                build.javaVersion = System.getProperty("java.version")
+
+                def includedBuilds = gradle.includedBuilds.collect { included ->
+                    [id: included.name, root: included.projectDir.canonicalPath, primary: false]
+                }.sort { it.id }
+
+                def modules = androidProjects.collect { project ->
+                    def android = project.extensions.findByName("android")
+                    def module = new LinkedHashMap()
+                    module.path = project.path
+                    module.buildId = "root"
+                    module.kind = project.plugins.hasPlugin("com.android.application") ? "application" : "library"
+                    if (android?.hasProperty("namespace") && android.namespace != null) module.namespace = android.namespace.toString()
+                    if (android?.hasProperty("compileSdk") && android.compileSdk != null) {
+                        def value = android.compileSdk.toString().replaceAll("[^0-9]", "")
+                        if (!value.isEmpty()) module.compileSdk = value.toInteger()
+                    }
+                    def defaultConfig = android?.hasProperty("defaultConfig") ? android.defaultConfig : null
+                    [targetSdk: "targetSdk", minimumSdk: "minSdk"].each { outputName, propertyName ->
+                        if (defaultConfig?.hasProperty(propertyName) && defaultConfig[propertyName] != null) {
+                            def value = defaultConfig[propertyName].toString().replaceAll("[^0-9]", "")
+                            if (!value.isEmpty()) module[outputName] = value.toInteger()
+                        }
+                    }
+                    if (android?.hasProperty("flavorDimensions")) {
+                        def dimensions = android.flavorDimensions.toList()
+                        if (!dimensions.isEmpty()) module.flavorDimensions = dimensions.withIndex().collect { value, index -> [name: value.toString(), order: index] }
+                    }
+                    if (android?.hasProperty("productFlavors")) {
+                        def flavors = android.productFlavors.collect { flavor -> [name: flavor.name, dimension: flavor.dimension ?: ""] }.sort { [it.dimension, it.name] }
+                        if (!flavors.isEmpty()) module.productFlavors = flavors
+                    }
+                    if (android?.hasProperty("buildTypes")) {
+                        def buildTypes = android.buildTypes.collect { type ->
+                            def value = [name: type.name]
+                            if (type.hasProperty("debuggable")) value.debuggable = type.debuggable
+                            value
+                        }.sort { it.name }
+                        if (!buildTypes.isEmpty()) module.buildTypes = buildTypes
+                    }
+                    def variants = (observedVariants[project.path] ?: []).sort { it.name }.collect { observed ->
+                        def value = new LinkedHashMap()
+                        value.name = observed.name
+                        value.enabled = observed.enabled
+                        value.buildType = observed.buildType
+                        if (observed.flavors != null) value.flavors = observed.flavors
+                        def applicationId = observed.__applicationId instanceof org.gradle.api.provider.Provider ? observed.__applicationId.orNull : observed.__applicationId
+                        if (applicationId != null) value.applicationId = applicationId.toString()
+                        def namespace = observed.__namespace instanceof org.gradle.api.provider.Provider ? observed.__namespace.orNull : observed.__namespace
+                        if (namespace != null) value.namespace = namespace.toString()
+                        value.tasks = observed.tasks
+                        value
+                    }
+                    def enabledNames = variants.collect { it.name } as Set
+                    (observedVariantBuilders[project.path] ?: []).findAll { builder ->
+                        builder.hasProperty("enable") && !builder.enable && !enabledNames.contains(builder.name)
+                    }.sort { it.name }.each { builder ->
+                        def disabled = new LinkedHashMap()
+                        disabled.name = builder.name
+                        disabled.enabled = false
+                        disabled.buildType = builder.buildType ?: ""
+                        if (builder.hasProperty("productFlavors")) {
+                            def flavors = builder.productFlavors.collect { flavor ->
+                                [dimension: flavor.first.toString(), flavor: flavor.second.toString()]
+                            }.sort { it.dimension }
+                            if (!flavors.isEmpty()) disabled.flavors = flavors
+                        }
+                        disabled.tasks = [:]
+                        variants << disabled
+                    }
+                    variants.sort { it.name }
+                    if (!variants.isEmpty()) module.variants = variants
+                    module
+                }
+
+                def tasks = root.allprojects.collectMany { project ->
+                    project.tasks.collect { task ->
+                        def kind = task.name.toLowerCase().startsWith("assemble") ? "assemble" :
+                            task.name.toLowerCase().startsWith("bundle") ? "bundle" :
+                            task.name.toLowerCase().startsWith("install") ? "install" :
+                            task.name.toLowerCase().contains("lint") ? "lint" : "other"
+                        def value = new LinkedHashMap()
+                        value.path = task.path
+                        value.name = task.name
+                        if (task.group != null) value.group = task.group
+                        if (task.description != null) value.description = task.description
+                        value.originBuild = "root"
+                        if (project != root) value.module = project.path
+                        value.kind = kind
+                        value
+                    }
+                }.sort { it.path }
+
+                def records = []
+                records << JsonOutput.toJson([protocolVersion: 1, type: "build", build: build])
+                includedBuilds.each { value -> records << JsonOutput.toJson([protocolVersion: 1, type: "includedBuild", includedBuild: value]) }
+                modules.each { value -> records << JsonOutput.toJson([protocolVersion: 1, type: "module", module: value]) }
+                tasks.each { value -> records << JsonOutput.toJson([protocolVersion: 1, type: "task", task: value]) }
+                def model = [root: root.rootDir.canonicalPath, build: build, includedBuilds: includedBuilds, modules: modules, tasks: tasks]
+                ModelBridge.writeModel(output, records, JsonOutput.toJson(model))
+            } catch (Throwable failure) {
+                ModelBridge.writeFailure(output, "configuration_failed", failure.toString())
+                throw failure
+            }
         }
     }
 }

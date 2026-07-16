@@ -11,14 +11,18 @@ publish = false
 
 [dependencies]
 dexdeck-protocol = { version = "0.2.0", path = "../dexdeck-protocol" }
+dexdeck-core = { version = "0.2.0", path = "../dexdeck-core" }
+dexdeck-config = { version = "0.2.0", path = "../dexdeck-config" }
 sha2.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+tokio-util.workspace = true
 
 [dev-dependencies]
-dexdeck-config = { version = "0.2.0", path = "../dexdeck-config" }
 dexdeck-test-support = { version = "0.2.0", path = "../dexdeck-test-support" }
 serde_json.workspace = true
 tempfile.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

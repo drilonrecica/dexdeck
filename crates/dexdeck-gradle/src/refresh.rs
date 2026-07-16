@@ -1,13 +1,5 @@
+pub use dexdeck_protocol::ModelFreshness as Freshness;
 use dexdeck_protocol::ProjectModel;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Freshness {
-    Provisional,
-    Current,
-    Stale,
-    Refreshing,
-    Degraded,
-}
 
 #[derive(Clone, Debug)]
 pub struct ModelRefresh {
