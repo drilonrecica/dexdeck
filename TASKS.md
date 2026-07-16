@@ -211,7 +211,7 @@ tree cancellation works; CLI emits valid schema-v1 output.
   changed files; never scan arbitrary source trees.
 - Commit: "feat(config): cache and fingerprint project models"
 
-### F2.9 Watch model inputs — P1/High
+### F2.9 Watch model inputs — P1/High ✅
 
 - Add cross-platform event watching, debounce, immediate stale status, delayed
   refresh during Gradle work, and valid session selection restoration.
