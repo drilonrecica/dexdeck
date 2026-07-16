@@ -102,6 +102,9 @@ dependencies {
   androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
 GRADLE
+cat > "$project/gradle.properties" <<'PROPERTIES'
+android.useAndroidX=true
+PROPERTIES
 
 cargo build -p dexdeck
 dexdeck_bin="$PWD/target/debug/dexdeck"

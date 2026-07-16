@@ -160,7 +160,10 @@ fn reject_unsafe_components(path: &Path) -> Result<(), StorageError> {
             continue;
         }
         match fs::symlink_metadata(component) {
-            Ok(metadata) if is_link_or_reparse_point(&metadata) => {
+            Ok(metadata)
+                if is_link_or_reparse_point(&metadata)
+                    && !is_macos_system_directory_alias(component) =>
+            {
                 return Err(StorageError::UnsafePath {
                     path: component.to_path_buf(),
                 });
@@ -171,6 +174,24 @@ fn reject_unsafe_components(path: &Path) -> Result<(), StorageError> {
         }
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn is_macos_system_directory_alias(path: &Path) -> bool {
+    let expected = match path.to_str() {
+        Some("/etc") => "private/etc",
+        Some("/tmp") => "private/tmp",
+        Some("/var") => "private/var",
+        _ => return false,
+    };
+    fs::read_link(path).is_ok_and(|target| {
+        target == Path::new(expected) || target == Path::new("/").join(expected)
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_macos_system_directory_alias(_path: &Path) -> bool {
+    false
 }
 
 fn usable_parent(path: &Path) -> Option<&Path> {
