@@ -1,12 +1,22 @@
 use std::{
     fmt,
     io::{self, IsTerminal, Write},
+    sync::Arc,
 };
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use dexdeck_config::{ProjectIdentity, StoragePaths, load_model};
-use dexdeck_gradle::{AdapterKind, discover_project, select_adapter};
-use dexdeck_protocol::{CLI_SCHEMA_VERSION, ProjectModel};
+use dexdeck_config::{
+    ConfigLayer, ConfigLoader, ConfigSources, GradleConfig, ProjectIdentity, StoragePaths,
+};
+use dexdeck_core::{ProcessSupervisor, SecretRedactor};
+use dexdeck_gradle::{
+    BridgeRunner, FileProjectModelCache, ProjectModelService, WatchingModelInputRegistrar,
+    discover_project,
+};
+use dexdeck_protocol::{
+    CLI_SCHEMA_VERSION, CliEnvelope, ErrorCategory, ErrorCode, ModuleVariant, ModulesSnapshot,
+    OperationContext, OperationError, ProjectModel, ProjectSnapshot, VariantsSnapshot,
+};
 use dexdeck_tui::ShellOptions;
 use serde::Serialize;
 
@@ -302,35 +312,137 @@ fn execute_project_command(
     let start = match cli.project.clone().map_or_else(std::env::current_dir, Ok) {
         Ok(path) => path,
         Err(error) => {
-            return write_operation_error(
+            return write_project_error(
+                cli,
                 stderr,
                 DexdeckExitCode::ProjectUnavailable,
+                ErrorCode::ProjectNotFound,
+                ErrorCategory::ProjectDetection,
                 &format!("cannot resolve the current directory: {error}"),
+            );
+        }
+    };
+    let storage = match StoragePaths::discover() {
+        Ok(storage) => storage,
+        Err(error) => {
+            return write_project_error(
+                cli,
+                stderr,
+                DexdeckExitCode::ProjectUnavailable,
+                ErrorCode::CacheInvalid,
+                ErrorCategory::Cache,
+                &format!("cannot resolve DexDeck storage: {error}"),
             );
         }
     };
     let discovery = match discover_project(&start, cli.project.is_some()) {
         Ok(discovery) => discovery,
         Err(error) => {
-            return write_operation_error(
+            return write_project_error(
+                cli,
                 stderr,
                 DexdeckExitCode::ProjectUnavailable,
+                ErrorCode::ProjectNotFound,
+                ErrorCategory::ProjectDetection,
                 &error.to_string(),
             );
         }
     };
-    let cached = ProjectIdentity::from_path(&discovery.root)
-        .ok()
-        .and_then(|identity| {
-            StoragePaths::discover()
-                .ok()
-                .map(|paths| paths.project(&identity))
-        })
-        .and_then(|paths| load_model(&paths.model).ok().flatten());
-    let (mut model, freshness) = cached.map_or_else(
-        || (ProjectModel::empty(discovery.root.clone()), "provisional"),
-        |model| (model, "current"),
+    let identity = match ProjectIdentity::from_path(&discovery.root) {
+        Ok(identity) => identity,
+        Err(error) => {
+            return write_project_error(
+                cli,
+                stderr,
+                DexdeckExitCode::ProjectUnavailable,
+                ErrorCode::ProjectNotFound,
+                ErrorCategory::ProjectDetection,
+                &error.to_string(),
+            );
+        }
+    };
+    let project_paths = storage.project(&identity);
+    let cli_layer = (!cli.gradle_arg.is_empty()).then(|| ConfigLayer {
+        gradle: GradleConfig {
+            arguments: Some(cli.gradle_arg.clone()),
+        },
+        ..ConfigLayer::default()
+    });
+    if let Err(error) = ConfigLoader.load(&ConfigSources {
+        shared: Some(discovery.root.join(".dexdeck/config.toml")),
+        user: Some(project_paths.user_config),
+        explicit: cli.config.clone(),
+        cli: cli_layer,
+        ..ConfigSources::default()
+    }) {
+        return write_project_error(
+            cli,
+            stderr,
+            DexdeckExitCode::InvalidUsage,
+            ErrorCode::InvalidConfiguration,
+            ErrorCategory::Configuration,
+            &error.to_string(),
+        );
+    }
+    let service = ProjectModelService::new(
+        Arc::new(BridgeRunner::new(
+            storage.bridge_cache_root(),
+            ProcessSupervisor::default(),
+        )),
+        Arc::new(FileProjectModelCache::new(storage)),
+        Arc::new(WatchingModelInputRegistrar::default()),
     );
+    let mut state = match service.open(&discovery.root, true) {
+        Ok(state) => state,
+        Err(error) => {
+            return write_project_error(
+                cli,
+                stderr,
+                DexdeckExitCode::ProjectUnavailable,
+                ErrorCode::ProjectNotFound,
+                ErrorCategory::ProjectDetection,
+                &error.to_string(),
+            );
+        }
+    };
+    if state.freshness != dexdeck_protocol::ModelFreshness::Current {
+        let runtime = match tokio::runtime::Runtime::new() {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                return write_project_error(
+                    cli,
+                    stderr,
+                    DexdeckExitCode::Internal,
+                    ErrorCode::Internal,
+                    ErrorCategory::Internal,
+                    &format!("cannot start project model runtime: {error}"),
+                );
+            }
+        };
+        state = match runtime.block_on(service.refresh(
+            tokio_util::sync::CancellationToken::new(),
+            tokio_util::sync::CancellationToken::new(),
+            &SecretRedactor::new(),
+        )) {
+            Ok(refreshed) => refreshed,
+            Err(_) => match service.state() {
+                Ok(failed) => failed,
+                Err(error) => {
+                    return write_project_error(
+                        cli,
+                        stderr,
+                        DexdeckExitCode::Internal,
+                        ErrorCode::Internal,
+                        ErrorCategory::Internal,
+                        &error.to_string(),
+                    );
+                }
+            },
+        };
+    }
+    let mut model = state
+        .model
+        .unwrap_or_else(|| ProjectModel::empty(start.canonicalize().unwrap_or(start)));
     model
         .modules
         .sort_by(|left, right| left.path.cmp(&right.path));
@@ -339,24 +451,55 @@ fn execute_project_command(
             .variants
             .sort_by(|left, right| left.name.cmp(&right.name));
     }
-    let degraded = model
-        .build
-        .agp_version
-        .as_deref()
-        .and_then(|version| select_adapter(Some(version)).ok())
-        .is_some_and(|adapter| adapter == AdapterKind::Degraded);
     let value = match command {
-        CliCommand::Project(_) => {
-            serde_json::json!({ "schemaVersion": CLI_SCHEMA_VERSION, "freshness": freshness, "degraded": degraded, "project": model })
-        }
-        CliCommand::Modules(_) => {
-            serde_json::json!({ "schemaVersion": CLI_SCHEMA_VERSION, "freshness": freshness, "degraded": degraded, "modules": model.modules })
-        }
+        CliCommand::Project(_) => serde_json::to_value(CliEnvelope::new(ProjectSnapshot {
+            freshness: state.freshness,
+            support: state.support,
+            degraded_reason: state.degraded_reason.clone(),
+            project: model,
+        })),
+        CliCommand::Modules(_) => serde_json::to_value(CliEnvelope::new(ModulesSnapshot {
+            freshness: state.freshness,
+            support: state.support,
+            degraded_reason: state.degraded_reason.clone(),
+            modules: model.modules,
+        })),
         CliCommand::Variants(_) => {
-            let variants = model.modules.iter().flat_map(|module| module.variants.iter().map(move |variant| serde_json::json!({ "module": module.path, "variant": variant }))).collect::<Vec<_>>();
-            serde_json::json!({ "schemaVersion": CLI_SCHEMA_VERSION, "freshness": freshness, "degraded": degraded, "variants": variants })
+            let variants = model
+                .modules
+                .into_iter()
+                .flat_map(|module| {
+                    let path = module.path;
+                    module
+                        .variants
+                        .into_iter()
+                        .map(move |variant| ModuleVariant {
+                            module: path.clone(),
+                            variant,
+                        })
+                })
+                .collect();
+            serde_json::to_value(CliEnvelope::new(VariantsSnapshot {
+                freshness: state.freshness,
+                support: state.support,
+                degraded_reason: state.degraded_reason,
+                variants,
+            }))
         }
         _ => unreachable!("project command already matched"),
+    };
+    let value = match value {
+        Ok(value) => value,
+        Err(_) => {
+            return write_project_error(
+                cli,
+                stderr,
+                DexdeckExitCode::Internal,
+                ErrorCode::Internal,
+                ErrorCategory::Internal,
+                "failed to serialize project output",
+            );
+        }
     };
     let result = match cli.format {
         OutputFormat::Json => serde_json::to_writer(&mut *stdout, &value)
@@ -366,9 +509,12 @@ fn execute_project_command(
         OutputFormat::Jsonl => unreachable!("validated snapshot format"),
     };
     if result.is_err() {
-        write_operation_error(
+        write_project_error(
+            cli,
             stderr,
             DexdeckExitCode::Internal,
+            ErrorCode::Internal,
+            ErrorCategory::Internal,
             "failed to write project output",
         )
     } else {
@@ -388,8 +534,8 @@ fn write_project_human(
     )?;
     writeln!(
         output,
-        "Degraded: {}",
-        value["degraded"].as_bool().unwrap_or(false)
+        "Support: {}",
+        value["support"].as_str().unwrap_or("unknown")
     )?;
     match command {
         CliCommand::Project(_) => writeln!(
@@ -428,13 +574,33 @@ fn write_project_human(
     }
 }
 
-fn write_operation_error(
+fn write_project_error(
+    cli: &Cli,
     stderr: &mut dyn Write,
-    code: DexdeckExitCode,
+    exit: DexdeckExitCode,
+    code: ErrorCode,
+    category: ErrorCategory,
     message: &str,
 ) -> DexdeckExitCode {
-    let _ = writeln!(stderr, "dexdeck: {message}");
-    code
+    if cli.format == OutputFormat::Json {
+        let report = CliEnvelope::new(OperationError {
+            code,
+            category,
+            message: message.to_owned(),
+            context: OperationContext {
+                operation: "project-model".into(),
+                previous_model_usable: false,
+                ..OperationContext::default()
+            },
+            suggested_action: None,
+        });
+        if serde_json::to_writer(&mut *stderr, &report).is_ok() {
+            let _ = writeln!(stderr);
+        }
+    } else {
+        let _ = writeln!(stderr, "dexdeck: {message}");
+    }
+    exit
 }
 
 fn validate(cli: &Cli, command: &CliCommand) -> Result<(), &'static str> {
@@ -592,6 +758,11 @@ mod tests {
             "rootProject.name = \"fixture\"\n",
         )
         .unwrap_or_else(|error| panic!("fixture: {error}"));
+        std::fs::write(
+            temp.path().join("build.gradle.kts"),
+            "plugins { id(\"com.android.application\") }\n",
+        )
+        .unwrap_or_else(|error| panic!("fixture: {error}"));
         let cli = Cli::parse_from([
             "dexdeck",
             "--project",
@@ -612,8 +783,52 @@ mod tests {
         let value: serde_json::Value =
             serde_json::from_slice(&stdout).unwrap_or_else(|error| panic!("JSON: {error}"));
         assert_eq!(value["schemaVersion"], CLI_SCHEMA_VERSION);
-        assert_eq!(value["freshness"], "provisional");
-        assert_eq!(value["degraded"], false);
+        assert_eq!(value["freshness"], "degraded");
+        assert_eq!(value["support"], "degraded");
+        assert_eq!(value["degradedReason"]["reason"], "missingWrapper");
         assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn rejects_invalid_explicit_configuration_before_modeling() {
+        let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+        std::fs::write(
+            temp.path().join("settings.gradle"),
+            "rootProject.name = 'fixture'\n",
+        )
+        .unwrap_or_else(|error| panic!("fixture: {error}"));
+        std::fs::write(
+            temp.path().join("build.gradle"),
+            "plugins { id 'com.android.application' }\n",
+        )
+        .unwrap_or_else(|error| panic!("fixture: {error}"));
+        let config = temp.path().join("invalid.toml");
+        std::fs::write(&config, "schema_version = 1\n[logcat]\nbuffer_mib = 1\n")
+            .unwrap_or_else(|error| panic!("config: {error}"));
+        let cli = Cli::parse_from([
+            "dexdeck",
+            "--project",
+            temp.path()
+                .to_str()
+                .unwrap_or_else(|| panic!("non-UTF8 temp path")),
+            "--config",
+            config
+                .to_str()
+                .unwrap_or_else(|| panic!("non-UTF8 config path")),
+            "project",
+            "inspect",
+            "--format",
+            "json",
+        ]);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(
+            execute(cli, terminals(), &mut stdout, &mut stderr),
+            DexdeckExitCode::InvalidUsage
+        );
+        let value: serde_json::Value = serde_json::from_slice(&stderr)
+            .unwrap_or_else(|error| panic!("structured error: {error}"));
+        assert_eq!(value["code"], "configuration.invalid");
+        assert!(stdout.is_empty());
     }
 }
