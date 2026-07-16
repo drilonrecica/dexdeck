@@ -6,6 +6,7 @@ mod custom_command;
 mod debug_diagnostics;
 mod error;
 mod job;
+mod log_actions;
 mod log_buffer;
 mod log_filter;
 mod process;
@@ -30,6 +31,10 @@ pub use error::DexError;
 pub use job::{
     CancellationDirective, DEFAULT_JOB_OUTPUT_BYTES, JOB_HISTORY_LIMIT, Job, JobFinish, JobRequest,
     JobSchedule, JobScheduler, JobSchedulerError, OutputBuffer,
+};
+pub use log_actions::{
+    COPY_MAX_BYTES, LogExportFormat, LogIoError, LogRecorder, LogViewState, RecordingStatus,
+    copy_osc52, export_logs,
 };
 pub use log_buffer::{
     ByteBoundedLogBuffer, DEFAULT_LOG_BUFFER_BYTES, LogBufferError, LogBufferStats,

@@ -334,7 +334,7 @@ stop; normal workflows preserve data; cancellation leaves no process behind.
   crash-only, error focus, compiled caching, and local saved presets.
 - Commit: "feat(logcat): add filters and search"
 
-### F4.5 Add export and recording actions — P1/High
+### F4.5 Add export and recording actions — P1/High ✅
 
 - Add pause, clear, scope/process selection, crash navigation, bounded explicit
   copy, visible/full export, and explicit recording start/stop.
