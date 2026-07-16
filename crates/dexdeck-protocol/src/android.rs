@@ -101,3 +101,25 @@ pub struct DevicesSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_serial: Option<String>,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AndroidAvd {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub abi: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub running_serial: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmulatorsSnapshot {
+    pub emulators: Vec<AndroidAvd>,
+}

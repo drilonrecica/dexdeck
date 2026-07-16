@@ -254,7 +254,7 @@ changes become stale; failure never replaces a valid snapshot.
 - Require explicit or valid restored active-device selection.
 - Commit: "feat(android): track ADB devices"
 
-### F3.3 Manage existing emulators — P1/High
+### F3.3 Manage existing emulators — P1/High ✅
 
 - List, inspect, start, cold boot, confirmed wipe, stop, map serials, and monitor
   boot completion. Never create or implicitly start/stop AVDs.

@@ -50,6 +50,11 @@ impl AdbClient {
         self.run(argv).await
     }
 
+    pub async fn kill_emulator(&self, serial: &str) -> Result<(), AdbError> {
+        self.run(["-s", serial, "emu", "kill"]).await?;
+        Ok(())
+    }
+
     async fn run<I, S>(&self, arguments: I) -> Result<String, AdbError>
     where
         I: IntoIterator<Item = S>,
