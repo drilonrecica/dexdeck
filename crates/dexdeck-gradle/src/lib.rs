@@ -5,6 +5,7 @@ mod agp9;
 mod bridge;
 mod discovery;
 mod embedded;
+mod refresh;
 
 pub use agp8::Agp8ModelBuilder;
 pub use agp9::Agp9ModelBuilder;
@@ -16,3 +17,4 @@ pub use discovery::{DiscoveryError, ProjectDiscovery, discover_project};
 pub use embedded::{
     EmbeddedBridgeError, ExtractedBridge, extract_bridge, parse_complete_output, select_gradle,
 };
+pub use refresh::{Freshness, ModelRefresh};
