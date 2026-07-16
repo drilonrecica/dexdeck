@@ -1,9 +1,76 @@
 //! Shared test fixtures and integration helpers.
 
+use serde::{Deserialize, Serialize};
 use std::{
     fs, io,
     path::{Path, PathBuf},
 };
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FakeToolScenario {
+    pub responses: Vec<FakeToolResponse>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FakeToolResponse {
+    pub arguments: Vec<String>,
+    #[serde(default)]
+    pub stdout: String,
+    #[serde(default)]
+    pub stderr: String,
+    #[serde(default)]
+    pub exit_code: i32,
+    #[serde(default)]
+    pub delay_ms: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct FakeTool {
+    pub executable: PathBuf,
+    pub calls: PathBuf,
+}
+
+impl FakeTool {
+    pub fn install(
+        compiled_helper: &Path,
+        executable: &Path,
+        scenario: &FakeToolScenario,
+    ) -> io::Result<Self> {
+        if let Some(parent) = executable.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(compiled_helper, executable)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(executable, fs::Permissions::from_mode(0o755))?;
+        }
+        let scenario_path = executable.with_extension("scenario.json");
+        let calls = executable.with_extension("calls.jsonl");
+        fs::write(
+            scenario_path,
+            serde_json::to_vec(scenario).map_err(io::Error::other)?,
+        )?;
+        Ok(Self {
+            executable: executable.into(),
+            calls,
+        })
+    }
+
+    pub fn calls(&self) -> io::Result<Vec<Vec<String>>> {
+        let source = match fs::read_to_string(&self.calls) {
+            Ok(source) => source,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        source
+            .lines()
+            .map(|line| serde_json::from_str(line).map_err(io::Error::other))
+            .collect()
+    }
+}
 
 /// Android project shapes covered by the project-model compatibility suite.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

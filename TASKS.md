@@ -297,7 +297,7 @@ changes become stale; failure never replaces a valid snapshot.
   command handlers with human/JSON/JSONL and stable errors.
 - Commit: "feat(cli): expose Android operations"
 
-### F3.10 Test execution workflows — P0/Critical
+### F3.10 Test execution workflows — P0/Critical ✅
 
 - Use fake SDK/ADB/emulator/Gradle tools to cover failures, disconnects,
   unauthorized devices, cancellation, release/destructive confirmation, split
