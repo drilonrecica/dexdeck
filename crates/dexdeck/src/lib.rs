@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fmt,
     io::{self, IsTerminal, Write},
     sync::Arc,
@@ -19,8 +20,9 @@ use dexdeck_core::{
     export_logs,
 };
 use dexdeck_gradle::{
-    BridgeRunner, FileProjectModelCache, GradleArgumentLayers, GradleRunRequest, GradleTaskRunner,
-    ProjectModelService, WatchingModelInputRegistrar, discover_project,
+    AndroidTestKind, AndroidTestRequest, AndroidTestRunner, BridgeRunner, FileProjectModelCache,
+    GradleArgumentLayers, GradleRunRequest, GradleTaskRunner, ProjectModelService,
+    ResolvedTestInvocation, TestReportParser, WatchingModelInputRegistrar, discover_project,
 };
 use dexdeck_protocol::{
     CLI_SCHEMA_VERSION, CliEnvelope, CliEvent, DevicesSnapshot, EmulatorsSnapshot, ErrorCategory,
@@ -384,7 +386,7 @@ enum CliCommand {
     Stop,
     Uninstall,
     ClearData,
-    Test,
+    Test(Box<TestArgs>),
     Logs(Box<LogsArgs>),
     Gradle(GradleArgs),
     Emulator(EmulatorArgs),
@@ -530,6 +532,29 @@ struct LogsArgs {
     overwrite: bool,
 }
 
+#[derive(Args, Clone, Debug)]
+struct TestArgs {
+    #[arg(long, value_enum, default_value_t = TestKindArg::Local)]
+    kind: TestKindArg,
+    #[arg(long, value_name = "GRADLE_TASK")]
+    task: Option<String>,
+    #[arg(long, value_name = "PACKAGE")]
+    package: Option<String>,
+    #[arg(long, value_name = "CLASS")]
+    class: Option<String>,
+    #[arg(long, value_name = "METHOD", requires = "class")]
+    method: Option<String>,
+    #[arg(long)]
+    rerun_failed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "lower")]
+enum TestKindArg {
+    Local,
+    Instrumentation,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 #[value(rename_all = "lower")]
 enum LogScopeArg {
@@ -624,7 +649,7 @@ impl CliCommand {
             | Self::Stop
             | Self::Uninstall
             | Self::ClearData
-            | Self::Test
+            | Self::Test(_)
             | Self::Logs(_)
             | Self::Gradle(_)
             | Self::Emulator(_)
@@ -726,6 +751,9 @@ pub fn execute(
     if let CliCommand::Logs(arguments) = command {
         return execute_logs(&cli, arguments, stdout, stderr);
     }
+    if let CliCommand::Test(arguments) = command {
+        return execute_tests(&cli, arguments, stdout, stderr);
+    }
 
     if matches!(
         command,
@@ -764,6 +792,234 @@ pub fn execute(
     // Feature handlers are wired in their implementation phases. Parsing and validation are
     // deliberately complete here so scripts can rely on one stable command grammar.
     DexdeckExitCode::Success
+}
+
+fn execute_tests(
+    cli: &Cli,
+    arguments: &TestArgs,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> DexdeckExitCode {
+    let project = match load_operation_project(cli) {
+        Ok(project) => project,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::ProjectUnavailable,
+                ErrorCode::ProjectNotFound,
+                &error,
+            );
+        }
+    };
+    let tools = match SdkResolver::default().resolve(&SdkResolution {
+        cli: cli.sdk.clone(),
+        configuration: project.config.android.sdk_path.clone(),
+        project_root: Some(project.root.clone()),
+        ..SdkResolution::default()
+    }) {
+        Ok(tools) => tools,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::ToolMissing,
+                ErrorCode::SdkMissing,
+                &error.to_string(),
+            );
+        }
+    };
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(error) => return write_error(stderr, &error.to_string()),
+    };
+    let adb = Arc::new(AdbClient::new(
+        tools.adb,
+        tools.sdk_root,
+        ProcessSupervisor::default(),
+    ));
+    let devices = match runtime.block_on(adb.enriched_devices()) {
+        Ok(devices) => devices,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::DeviceError,
+                ErrorCode::DeviceUnavailable,
+                &error.to_string(),
+            );
+        }
+    };
+    let kind = arguments.task.as_ref().map_or_else(
+        || match arguments.kind {
+            TestKindArg::Local => AndroidTestKind::Local,
+            TestKindArg::Instrumentation => AndroidTestKind::Instrumentation,
+        },
+        |task| AndroidTestKind::Custom { task: task.clone() },
+    );
+    let instrumentation = matches!(kind, AndroidTestKind::Instrumentation);
+    let mut redactor = SecretRedactor::new();
+    let profile = match RunProfileResolver::resolve(
+        &project.model,
+        &project.config,
+        &devices,
+        &RunProfileSelection {
+            profile: cli.profile.clone(),
+            module: cli.module.clone(),
+            variant: cli.variant.clone(),
+            device: cli.device.clone(),
+            gradle_arguments: cli.gradle_arg.clone(),
+            require_device: instrumentation,
+        },
+        &mut redactor,
+    ) {
+        Ok(profile) => profile,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::InvalidUsage,
+                ErrorCode::InvalidConfiguration,
+                &error.to_string(),
+            );
+        }
+    };
+    let base_selection = dexdeck_protocol::TestSelection {
+        module: Some(profile.module.path.clone()),
+        package: arguments.package.clone(),
+        class: arguments.class.clone(),
+        method: arguments.method.clone(),
+    };
+    let probe = AndroidTestRequest {
+        root: project.root.clone(),
+        module: profile.module.path.clone(),
+        variant: profile.variant.name.clone(),
+        kind: kind.clone(),
+        selection: base_selection.clone(),
+        device_serial: profile.device.as_ref().map(|device| device.serial.clone()),
+        gradle_arguments: GradleArgumentLayers::default(),
+        environment: BTreeMap::new(),
+        cancel: tokio_util::sync::CancellationToken::new(),
+        force_cancel: tokio_util::sync::CancellationToken::new(),
+        redactor: SecretRedactor::new(),
+    };
+    let invocation = match ResolvedTestInvocation::resolve(&probe) {
+        Ok(invocation) => invocation,
+        Err(error) => return write_error(stderr, &error.to_string()),
+    };
+    let report_root = profile.module.project_directory.join("build/test-results");
+    let selections = if arguments.rerun_failed {
+        if instrumentation || matches!(kind, AndroidTestKind::Custom { .. }) {
+            return write_error(
+                stderr,
+                "--rerun-failed requires reconstructable local JUnit results",
+            );
+        }
+        let previous = TestReportParser::parse_junit_paths(
+            std::slice::from_ref(&report_root),
+            base_selection.clone(),
+        );
+        let failed = previous
+            .result
+            .cases
+            .into_iter()
+            .filter(|case| case.outcome == dexdeck_protocol::TestOutcome::Failed)
+            .map(|case| dexdeck_protocol::TestSelection {
+                module: Some(profile.module.path.clone()),
+                package: None,
+                class: Some(case.class),
+                method: Some(case.name),
+            })
+            .collect::<Vec<_>>();
+        if failed.is_empty() {
+            return write_error(stderr, "no failed local test selections were found");
+        }
+        failed
+    } else {
+        vec![base_selection.clone()]
+    };
+    if cli.format == OutputFormat::Jsonl {
+        let _ = write_cli_event(
+            stdout,
+            CliEvent::JobStarted {
+                job_id: JobId("tests".into()),
+                kind: JobKind::Test,
+            },
+        );
+    } else {
+        let _ = writeln!(stderr, "Running {}", invocation.task);
+    }
+    let runner = AndroidTestRunner::default();
+    let mut raw_output = String::new();
+    let mut failed_process = false;
+    for selection in selections {
+        let result = runtime.block_on(runner.run(AndroidTestRequest {
+            root: project.root.clone(),
+            module: profile.module.path.clone(),
+            variant: profile.variant.name.clone(),
+            kind: kind.clone(),
+            selection,
+            device_serial: profile.device.as_ref().map(|device| device.serial.clone()),
+            gradle_arguments: GradleArgumentLayers {
+                cli: cli.gradle_arg.clone(),
+                ..GradleArgumentLayers::default()
+            },
+            environment: BTreeMap::new(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            force_cancel: tokio_util::sync::CancellationToken::new(),
+            redactor: SecretRedactor::new(),
+        }));
+        match result {
+            Ok(result) => {
+                failed_process |= result.exit_code != Some(0);
+                raw_output.push_str(&result.stdout.text_lossy());
+                raw_output.push_str(&result.stderr.text_lossy());
+            }
+            Err(error) => {
+                return write_android_error(
+                    cli,
+                    stderr,
+                    DexdeckExitCode::OperationFailed,
+                    ErrorCode::GradleFailed,
+                    &error.to_string(),
+                );
+            }
+        }
+    }
+    let result = if instrumentation {
+        TestReportParser::parse_instrumentation(&raw_output, base_selection).result
+    } else {
+        TestReportParser::parse_junit_paths(std::slice::from_ref(&report_root), base_selection)
+            .result
+    };
+    let output_result = match cli.format {
+        OutputFormat::Human => writeln!(
+            stdout,
+            "{} passed, {} failed, {} skipped, {} ms",
+            result.summary.passed,
+            result.summary.failed,
+            result.summary.skipped,
+            result.summary.duration_ms
+        ),
+        OutputFormat::Json => serde_json::to_writer(&mut *stdout, &CliEnvelope::new(&result))
+            .map_err(io::Error::other)
+            .and_then(|()| writeln!(stdout)),
+        OutputFormat::Jsonl => write_cli_event(
+            stdout,
+            CliEvent::TestResult {
+                job_id: JobId("tests".into()),
+                result: result.clone(),
+            },
+        ),
+    };
+    if output_result.is_err() {
+        return DexdeckExitCode::Internal;
+    }
+    if failed_process || result.summary.failed > 0 {
+        DexdeckExitCode::OperationFailed
+    } else {
+        DexdeckExitCode::Success
+    }
 }
 
 fn execute_logs(
@@ -2511,6 +2767,9 @@ fn write_project_error(
 }
 
 fn validate(cli: &Cli, command: &CliCommand) -> Result<(), &'static str> {
+    if matches!(command, CliCommand::Test(_)) {
+        return Ok(());
+    }
     match (command.output_kind(), cli.format) {
         (OutputKind::Snapshot, OutputFormat::Jsonl) => {
             return Err("snapshot commands support --format human or json, not jsonl");

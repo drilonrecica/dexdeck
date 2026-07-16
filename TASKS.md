@@ -396,7 +396,7 @@ all processes; memory is bounded; no automatic disk writes occur.
 - Validate placeholders and executable availability.
 - Commit: "feat(core): open diagnostic source locations"
 
-### F5.6 Expose structured test results — P1/High
+### F5.6 Expose structured test results — P1/High ✅
 
 - Implement test CLI selection, human/JSON/JSONL, rerun-failed, and exit status.
 - Commit: "feat(cli): expose structured test results"
