@@ -6,16 +6,17 @@ use std::{
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dexdeck_android::{
-    AdbClient, ApplicationService, Doctor, EmulatorLaunch, EmulatorService, InstallOptions,
-    SdkResolution, SdkResolver,
+    AdbClient, ApplicationService, DeviceSelector, Doctor, EmulatorLaunch, EmulatorService,
+    InstallOptions, LogProcessSelector, LogcatRequest, LogcatService, SdkResolution, SdkResolver,
 };
 use dexdeck_config::{
-    ConfigLayer, ConfigLoader, ConfigSources, GradleConfig, ProjectIdentity, ProjectPaths,
-    ResolvedConfig, StoragePaths,
+    ConfigLayer, ConfigLoader, ConfigSources, GradleConfig, LogScope, ProjectIdentity,
+    ProjectPaths, RecoveredFile, ResolvedConfig, StoragePaths, load_log_filters, save_log_filters,
 };
 use dexdeck_core::{
-    CustomCommandService, ProcessSupervisor, RunProfileResolver, RunProfileSelection,
-    SecretRedactor, TrustDecision,
+    ByteBoundedLogBuffer, CompiledLogFilter, CustomCommandService, LogExportFormat, LogRecorder,
+    ProcessSupervisor, RunProfileResolver, RunProfileSelection, SecretRedactor, TrustDecision,
+    export_logs,
 };
 use dexdeck_gradle::{
     BridgeRunner, FileProjectModelCache, GradleArgumentLayers, GradleRunRequest, GradleTaskRunner,
@@ -23,8 +24,9 @@ use dexdeck_gradle::{
 };
 use dexdeck_protocol::{
     CLI_SCHEMA_VERSION, CliEnvelope, CliEvent, DevicesSnapshot, EmulatorsSnapshot, ErrorCategory,
-    ErrorCode, JobId, JobKind, JobRecord, JobState, ModuleVariant, ModulesSnapshot,
-    OperationContext, OperationError, ProjectModel, ProjectSnapshot, VariantsSnapshot,
+    ErrorCode, JobId, JobKind, JobRecord, JobState, LogFilterSpec, LogPriority, LogStatusData,
+    LogTextSearch, ModuleVariant, ModulesSnapshot, OperationContext, OperationError, ProjectModel,
+    ProjectSnapshot, SavedLogFilterPreset, VariantsSnapshot,
 };
 use dexdeck_tui::ShellOptions;
 use serde::Serialize;
@@ -134,7 +136,7 @@ enum CliCommand {
     Uninstall,
     ClearData,
     Test,
-    Logs,
+    Logs(Box<LogsArgs>),
     Gradle(GradleArgs),
     Emulator(EmulatorArgs),
     Command(CustomCommandArgs),
@@ -227,6 +229,121 @@ struct CustomCommandArgs {
     command: CustomCommand,
 }
 
+#[derive(Args, Clone, Debug)]
+struct LogsArgs {
+    #[arg(long, value_enum, default_value_t = LogScopeArg::Application)]
+    scope: LogScopeArg,
+    #[arg(long, value_name = "APPLICATION_ID")]
+    package: Option<String>,
+    #[arg(long, value_name = "NAME_OR_PID")]
+    process: Option<String>,
+    #[arg(long, value_enum)]
+    min_priority: Option<LogPriorityArg>,
+    #[arg(long, value_name = "TAG", action = clap::ArgAction::Append)]
+    include_tag: Vec<String>,
+    #[arg(long, value_name = "TAG", action = clap::ArgAction::Append)]
+    exclude_tag: Vec<String>,
+    #[arg(long, value_name = "VALUE", action = clap::ArgAction::Append)]
+    include_package: Vec<String>,
+    #[arg(long, value_name = "VALUE", action = clap::ArgAction::Append)]
+    exclude_package: Vec<String>,
+    #[arg(long, value_name = "VALUE", action = clap::ArgAction::Append)]
+    include_process: Vec<String>,
+    #[arg(long, value_name = "VALUE", action = clap::ArgAction::Append)]
+    exclude_process: Vec<String>,
+    #[arg(long, value_name = "QUERY", conflicts_with = "regex")]
+    text: Option<String>,
+    #[arg(long, value_name = "EXPRESSION", conflicts_with = "text")]
+    regex: Option<String>,
+    #[arg(long)]
+    case_sensitive: bool,
+    #[arg(long, conflicts_with = "errors")]
+    crash_only: bool,
+    #[arg(long, conflicts_with = "crash_only")]
+    errors: bool,
+    #[arg(long, value_name = "NAME")]
+    preset: Option<String>,
+    #[arg(long, value_name = "NAME")]
+    save_preset: Option<String>,
+    #[arg(long, default_value_t = 32, value_parser = clap::value_parser!(u16).range(8..=1024))]
+    buffer_mib: u16,
+    #[arg(long, value_name = "PATH")]
+    export: Option<std::path::PathBuf>,
+    #[arg(long, value_enum, default_value_t = LogExportViewArg::Visible, requires = "export")]
+    export_view: LogExportViewArg,
+    #[arg(long, value_enum, default_value_t = LogFileFormatArg::Text, requires = "export")]
+    export_format: LogFileFormatArg,
+    #[arg(long, value_name = "PATH")]
+    record: Option<std::path::PathBuf>,
+    #[arg(long, value_enum, default_value_t = LogFileFormatArg::Text, requires = "record")]
+    record_format: LogFileFormatArg,
+    #[arg(long)]
+    overwrite: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "lower")]
+enum LogScopeArg {
+    Application,
+    Device,
+}
+
+impl From<LogScopeArg> for LogScope {
+    fn from(value: LogScopeArg) -> Self {
+        match value {
+            LogScopeArg::Application => Self::Application,
+            LogScopeArg::Device => Self::Device,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "lower")]
+enum LogPriorityArg {
+    Verbose,
+    Debug,
+    Info,
+    Warning,
+    Error,
+    Fatal,
+}
+
+impl From<LogPriorityArg> for LogPriority {
+    fn from(value: LogPriorityArg) -> Self {
+        match value {
+            LogPriorityArg::Verbose => Self::Verbose,
+            LogPriorityArg::Debug => Self::Debug,
+            LogPriorityArg::Info => Self::Info,
+            LogPriorityArg::Warning => Self::Warning,
+            LogPriorityArg::Error => Self::Error,
+            LogPriorityArg::Fatal => Self::Fatal,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "lower")]
+enum LogExportViewArg {
+    Visible,
+    Full,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "lower")]
+enum LogFileFormatArg {
+    Text,
+    Jsonl,
+}
+
+impl From<LogFileFormatArg> for LogExportFormat {
+    fn from(value: LogFileFormatArg) -> Self {
+        match value {
+            LogFileFormatArg::Text => Self::Text,
+            LogFileFormatArg::Jsonl => Self::Jsonl,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum CustomCommand {
     Run { name: String },
@@ -259,7 +376,7 @@ impl CliCommand {
             | Self::Uninstall
             | Self::ClearData
             | Self::Test
-            | Self::Logs
+            | Self::Logs(_)
             | Self::Gradle(_)
             | Self::Emulator(_)
             | Self::Command(_) => OutputKind::Streaming,
@@ -357,6 +474,9 @@ pub fn execute(
     if matches!(command, CliCommand::Doctor) {
         return execute_doctor(&cli, stdout, stderr);
     }
+    if let CliCommand::Logs(arguments) = command {
+        return execute_logs(&cli, arguments, stdout, stderr);
+    }
 
     if matches!(
         command,
@@ -395,6 +515,577 @@ pub fn execute(
     // Feature handlers are wired in their implementation phases. Parsing and validation are
     // deliberately complete here so scripts can rely on one stable command grammar.
     DexdeckExitCode::Success
+}
+
+fn execute_logs(
+    cli: &Cli,
+    arguments: &LogsArgs,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> DexdeckExitCode {
+    let scope = LogScope::from(arguments.scope);
+    let project_result = load_operation_project(cli);
+    let project_required = (scope == LogScope::Application && arguments.package.is_none())
+        || arguments.preset.is_some()
+        || arguments.save_preset.is_some()
+        || cli.profile.is_some()
+        || cli.module.is_some()
+        || cli.variant.is_some();
+    let project = match project_result {
+        Ok(project) => Some(project),
+        Err(error) if project_required => {
+            return write_log_error(
+                cli,
+                stdout,
+                stderr,
+                DexdeckExitCode::ProjectUnavailable,
+                ErrorCode::ProjectNotFound,
+                &error,
+            );
+        }
+        Err(_) => None,
+    };
+
+    let mut filter = match load_requested_filter(arguments, project.as_ref()) {
+        Ok(filter) => filter,
+        Err(error) => {
+            return write_log_error(
+                cli,
+                stdout,
+                stderr,
+                DexdeckExitCode::InvalidUsage,
+                ErrorCode::LogcatInvalidFilter,
+                &error,
+            );
+        }
+    };
+    apply_log_filter_arguments(&mut filter, arguments);
+    let compiled = match CompiledLogFilter::compile(filter.clone()) {
+        Ok(compiled) => compiled,
+        Err(error) => {
+            return write_log_error(
+                cli,
+                stdout,
+                stderr,
+                DexdeckExitCode::InvalidUsage,
+                ErrorCode::LogcatInvalidFilter,
+                &error.to_string(),
+            );
+        }
+    };
+    if let Some(name) = &arguments.save_preset {
+        let Some(project) = &project else {
+            return write_log_error(
+                cli,
+                stdout,
+                stderr,
+                DexdeckExitCode::ProjectUnavailable,
+                ErrorCode::ProjectNotFound,
+                "saving a preset requires an Android project",
+            );
+        };
+        if let Err(error) = save_requested_filter(&project.paths, name, filter.clone()) {
+            return write_log_error(
+                cli,
+                stdout,
+                stderr,
+                DexdeckExitCode::InvalidUsage,
+                ErrorCode::LogcatInvalidFilter,
+                &error,
+            );
+        }
+    }
+
+    let resolver = SdkResolver::default();
+    let tools = match resolver.resolve(&SdkResolution {
+        cli: cli.sdk.clone(),
+        configuration: project
+            .as_ref()
+            .and_then(|value| value.config.android.sdk_path.clone()),
+        project_root: project.as_ref().map(|value| value.root.clone()),
+        ..SdkResolution::default()
+    }) {
+        Ok(tools) => tools,
+        Err(error) => {
+            return write_log_error(
+                cli,
+                stdout,
+                stderr,
+                DexdeckExitCode::ToolMissing,
+                ErrorCode::SdkMissing,
+                &error.to_string(),
+            );
+        }
+    };
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return write_log_error(
+                cli,
+                stdout,
+                stderr,
+                DexdeckExitCode::Internal,
+                ErrorCode::Internal,
+                &error.to_string(),
+            );
+        }
+    };
+    let adb = Arc::new(AdbClient::new(
+        tools.adb.clone(),
+        tools.sdk_root.clone(),
+        ProcessSupervisor::default(),
+    ));
+    let devices = match runtime.block_on(adb.enriched_devices()) {
+        Ok(devices) => devices,
+        Err(error) => {
+            return write_log_error(
+                cli,
+                stdout,
+                stderr,
+                DexdeckExitCode::DeviceError,
+                ErrorCode::DeviceUnavailable,
+                &error.to_string(),
+            );
+        }
+    };
+    let (serial, package) = match resolve_log_target(cli, arguments, project.as_ref(), &devices) {
+        Ok(target) => target,
+        Err(error) => {
+            return write_log_error(
+                cli,
+                stdout,
+                stderr,
+                DexdeckExitCode::DeviceError,
+                ErrorCode::DeviceUnavailable,
+                &error,
+            );
+        }
+    };
+    let process = arguments.process.as_ref().map(|value| {
+        value.parse::<u32>().map_or_else(
+            |_| LogProcessSelector::Name(value.clone()),
+            LogProcessSelector::Pid,
+        )
+    });
+    let mut buffer = match ByteBoundedLogBuffer::from_mib(arguments.buffer_mib) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            return write_log_error(
+                cli,
+                stdout,
+                stderr,
+                DexdeckExitCode::InvalidUsage,
+                ErrorCode::InvalidConfiguration,
+                &error.to_string(),
+            );
+        }
+    };
+    let recorder = match arguments.record.as_ref() {
+        Some(path) => {
+            match LogRecorder::start(path, arguments.record_format.into(), arguments.overwrite) {
+                Ok(recorder) => Some(recorder),
+                Err(error) => {
+                    return write_log_error(
+                        cli,
+                        stdout,
+                        stderr,
+                        DexdeckExitCode::OperationFailed,
+                        ErrorCode::LogcatRecordingFailed,
+                        &error.to_string(),
+                    );
+                }
+            }
+        }
+        None => None,
+    };
+
+    let outcome = runtime.block_on(run_logs(
+        cli,
+        arguments,
+        tools.adb,
+        tools.sdk_root,
+        serial,
+        package,
+        process,
+        compiled,
+        &mut buffer,
+        recorder,
+        stdout,
+        stderr,
+    ));
+    match outcome {
+        Ok(cancelled) if cancelled => DexdeckExitCode::Cancelled,
+        Ok(_) => DexdeckExitCode::Success,
+        Err((code, error)) => write_log_error(
+            cli,
+            stdout,
+            stderr,
+            DexdeckExitCode::OperationFailed,
+            code,
+            &error,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_logs(
+    cli: &Cli,
+    arguments: &LogsArgs,
+    adb: std::path::PathBuf,
+    working_directory: std::path::PathBuf,
+    serial: String,
+    package: Option<String>,
+    process: Option<LogProcessSelector>,
+    filter: CompiledLogFilter,
+    buffer: &mut ByteBoundedLogBuffer,
+    recorder: Option<LogRecorder>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<bool, (ErrorCode, String)> {
+    let request = LogcatRequest {
+        device_serial: serial,
+        package,
+        scope: arguments.scope.into(),
+        process,
+    };
+    let service = LogcatService::new(adb, working_directory, ProcessSupervisor::default());
+    let mut session = service
+        .start(request)
+        .await
+        .map_err(|error| (ErrorCode::LogcatCaptureFailed, error.to_string()))?;
+    emit_log_started(cli, stdout, stderr)
+        .map_err(|error| (ErrorCode::LogcatCaptureFailed, error.to_string()))?;
+    let mut last_status = None;
+    let mut cancelled = false;
+    loop {
+        tokio::select! {
+            signal = tokio::signal::ctrl_c() => {
+                signal.map_err(|error| (ErrorCode::LogcatCaptureFailed, error.to_string()))?;
+                cancelled = true;
+                break;
+            }
+            batch = session.recv() => {
+                let Some(batch) = batch else { break };
+                if let Some(recorder) = &recorder {
+                    recorder.try_record(batch.clone()).map_err(|error| {
+                        (ErrorCode::LogcatRecordingFailed, error.to_string())
+                    })?;
+                }
+                for record in batch {
+                    let visible = filter.matches(&record);
+                    let _ = buffer.push(record.clone());
+                    if visible {
+                        emit_log_record(cli, stdout, &record).map_err(|error| {
+                            (ErrorCode::LogcatCaptureFailed, error.to_string())
+                        })?;
+                    }
+                }
+                let status = session.status();
+                if last_status.as_ref() != Some(&status) {
+                    emit_log_status(cli, stdout, stderr, &status).map_err(|error| {
+                        (ErrorCode::LogcatCaptureFailed, error.to_string())
+                    })?;
+                    last_status = Some(status);
+                }
+            }
+        }
+    }
+    session
+        .shutdown()
+        .await
+        .map_err(|error| (ErrorCode::LogcatCaptureFailed, error.to_string()))?;
+    if let Some(recorder) = recorder {
+        let status = recorder
+            .stop()
+            .await
+            .map_err(|error| (ErrorCode::LogcatRecordingFailed, error.to_string()))?;
+        if let Some(error) = status.error {
+            return Err((ErrorCode::LogcatRecordingFailed, error));
+        }
+    }
+    if let Some(path) = &arguments.export {
+        let snapshot = buffer.snapshot();
+        let export = if arguments.export_view == LogExportViewArg::Visible {
+            snapshot
+                .into_iter()
+                .filter(|entry| filter.matches(&entry.record))
+                .collect::<Vec<_>>()
+        } else {
+            snapshot
+        };
+        export_logs(
+            path,
+            &export,
+            arguments.export_format.into(),
+            arguments.overwrite,
+        )
+        .map_err(|error| (ErrorCode::LogcatExportFailed, error.to_string()))?;
+    }
+    emit_log_finished(cli, stdout, stderr, cancelled)
+        .map_err(|error| (ErrorCode::LogcatCaptureFailed, error.to_string()))?;
+    Ok(cancelled)
+}
+
+fn load_requested_filter(
+    arguments: &LogsArgs,
+    project: Option<&OperationProject>,
+) -> Result<LogFilterSpec, String> {
+    let Some(name) = &arguments.preset else {
+        return Ok(LogFilterSpec::default());
+    };
+    let project =
+        project.ok_or_else(|| "loading a preset requires an Android project".to_owned())?;
+    let presets =
+        match load_log_filters(&project.paths.filters).map_err(|error| error.to_string())? {
+            RecoveredFile::Missing => {
+                return Err(format!("Logcat filter preset {name:?} was not found"));
+            }
+            RecoveredFile::Corrupt { message, .. } => {
+                return Err(format!("saved Logcat filters are corrupt: {message}"));
+            }
+            RecoveredFile::Loaded(presets) => presets,
+        };
+    presets
+        .into_iter()
+        .find(|preset| preset.name == *name)
+        .map(|preset| preset.filter)
+        .ok_or_else(|| format!("Logcat filter preset {name:?} was not found"))
+}
+
+fn apply_log_filter_arguments(filter: &mut LogFilterSpec, arguments: &LogsArgs) {
+    if let Some(priority) = arguments.min_priority {
+        filter.minimum_priority = Some(priority.into());
+    }
+    filter.include_tags.extend(arguments.include_tag.clone());
+    filter.exclude_tags.extend(arguments.exclude_tag.clone());
+    filter
+        .include_packages
+        .extend(arguments.include_package.clone());
+    filter
+        .exclude_packages
+        .extend(arguments.exclude_package.clone());
+    filter
+        .include_processes
+        .extend(arguments.include_process.clone());
+    filter
+        .exclude_processes
+        .extend(arguments.exclude_process.clone());
+    if let Some(text) = &arguments.text {
+        filter.text_search = Some(LogTextSearch::Plain(text.clone()));
+    } else if let Some(regex) = &arguments.regex {
+        filter.text_search = Some(LogTextSearch::Regex(regex.clone()));
+    }
+    filter.case_sensitive |= arguments.case_sensitive;
+    filter.crash_only |= arguments.crash_only;
+    filter.errors |= arguments.errors;
+}
+
+fn save_requested_filter(
+    paths: &ProjectPaths,
+    name: &str,
+    filter: LogFilterSpec,
+) -> Result<(), String> {
+    let mut presets = match load_log_filters(&paths.filters).map_err(|error| error.to_string())? {
+        RecoveredFile::Loaded(presets) => presets,
+        RecoveredFile::Missing | RecoveredFile::Corrupt { .. } => Vec::new(),
+    };
+    presets.retain(|preset| preset.name != name);
+    presets.push(SavedLogFilterPreset {
+        name: name.to_owned(),
+        filter,
+    });
+    save_log_filters(&paths.filters, &presets).map_err(|error| error.to_string())
+}
+
+fn resolve_log_target(
+    cli: &Cli,
+    arguments: &LogsArgs,
+    project: Option<&OperationProject>,
+    devices: &[dexdeck_protocol::AndroidDevice],
+) -> Result<(String, Option<String>), String> {
+    let needs_profile = arguments.package.is_none()
+        || cli.device.is_none()
+        || cli.profile.is_some()
+        || cli.module.is_some()
+        || cli.variant.is_some();
+    if needs_profile && let Some(project) = project {
+        let mut redactor = SecretRedactor::new();
+        let profile = RunProfileResolver::resolve(
+            &project.model,
+            &project.config,
+            devices,
+            &RunProfileSelection {
+                profile: cli.profile.clone(),
+                module: cli.module.clone(),
+                variant: cli.variant.clone(),
+                device: cli.device.clone(),
+                gradle_arguments: Vec::new(),
+                require_device: true,
+            },
+            &mut redactor,
+        )
+        .map_err(|error| error.to_string())?;
+        let device = profile
+            .device
+            .ok_or_else(|| "device is required".to_owned())?;
+        let package = arguments.package.clone().or(profile.variant.application_id);
+        return Ok((device.serial, package));
+    }
+    let selector = cli.device.as_deref().ok_or_else(|| {
+        "--device is required when no run profile or last-used device is available".to_owned()
+    })?;
+    let device = DeviceSelector::resolve(devices, selector).map_err(|error| error.to_string())?;
+    Ok((device.serial.clone(), arguments.package.clone()))
+}
+
+fn emit_log_started(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> io::Result<()> {
+    if cli.format == OutputFormat::Jsonl {
+        write_cli_event(
+            stdout,
+            CliEvent::JobStarted {
+                job_id: JobId("logs".into()),
+                kind: JobKind::Logcat,
+            },
+        )
+    } else {
+        writeln!(stderr, "Logcat capture started")
+    }
+}
+
+fn emit_log_record(
+    cli: &Cli,
+    stdout: &mut dyn Write,
+    record: &dexdeck_protocol::LogRecord,
+) -> io::Result<()> {
+    if cli.format == OutputFormat::Jsonl {
+        write_cli_event(
+            stdout,
+            CliEvent::Log {
+                record: record.clone(),
+            },
+        )
+    } else {
+        writeln!(
+            stdout,
+            "{} {} {} {:?} {}: {}",
+            record.timestamp,
+            record.process_id,
+            record.thread_id,
+            record.priority,
+            record.tag,
+            record.message
+        )
+    }
+}
+
+fn emit_log_status(
+    cli: &Cli,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+    status: &dexdeck_android::LogcatStatus,
+) -> io::Result<()> {
+    if cli.format == OutputFormat::Jsonl {
+        write_cli_event(
+            stdout,
+            CliEvent::LogStatus {
+                status: LogStatusData {
+                    connected: status.connected,
+                    reconnects: status.reconnects,
+                    batches_dropped: status.batches_dropped,
+                    records_dropped: status.records_dropped,
+                    tracked_processes: u64::try_from(status.tracked_processes).unwrap_or(u64::MAX),
+                    message: status.last_error.clone(),
+                },
+            },
+        )
+    } else if status.batches_dropped > 0 || status.last_error.is_some() {
+        writeln!(
+            stderr,
+            "Logcat: connected={}, dropped={}{}",
+            status.connected,
+            status.records_dropped,
+            status
+                .last_error
+                .as_deref()
+                .map_or(String::new(), |error| format!(", {error}"))
+        )
+    } else {
+        Ok(())
+    }
+}
+
+fn emit_log_finished(
+    cli: &Cli,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+    cancelled: bool,
+) -> io::Result<()> {
+    if cli.format == OutputFormat::Jsonl {
+        write_cli_event(
+            stdout,
+            CliEvent::JobFinished {
+                job: JobRecord {
+                    id: JobId("logs".into()),
+                    kind: JobKind::Logcat,
+                    state: if cancelled {
+                        JobState::Cancelled
+                    } else {
+                        JobState::Succeeded
+                    },
+                    project_identity: "cli".into(),
+                    module: cli.module.clone(),
+                    variant: cli.variant.clone(),
+                    device: cli.device.clone(),
+                    command_summary: vec!["logs".into()],
+                    started_at: "cli".into(),
+                    finished_at: Some("cli".into()),
+                    duration_ms: None,
+                    exit_code: Some(if cancelled { 6 } else { 0 }),
+                    diagnostics: Vec::new(),
+                },
+            },
+        )
+    } else if cancelled {
+        writeln!(stderr, "Logcat capture cancelled")
+    } else {
+        writeln!(stderr, "Logcat capture finished")
+    }
+}
+
+fn write_cli_event(output: &mut dyn Write, event: CliEvent) -> io::Result<()> {
+    serde_json::to_writer(&mut *output, &CliEnvelope::new(event)).map_err(io::Error::other)?;
+    writeln!(output)
+}
+
+fn write_log_error(
+    cli: &Cli,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+    exit: DexdeckExitCode,
+    code: ErrorCode,
+    message: &str,
+) -> DexdeckExitCode {
+    if cli.format == OutputFormat::Jsonl {
+        let _ = write_cli_event(
+            stdout,
+            CliEvent::Error {
+                error: OperationError {
+                    code,
+                    category: ErrorCategory::Logcat,
+                    message: message.into(),
+                    context: OperationContext {
+                        operation: "logcat".into(),
+                        previous_model_usable: false,
+                        ..OperationContext::default()
+                    },
+                    suggested_action: None,
+                },
+            },
+        );
+    } else {
+        let _ = writeln!(stderr, "dexdeck: {message}");
+    }
+    exit
 }
 
 fn execute_android_tool_command(
@@ -1654,6 +2345,34 @@ mod tests {
             vec!["dexdeck", "run", "--downgrade", "--grant-all", "--yes"],
             vec!["dexdeck", "uninstall", "--yes"],
             vec!["dexdeck", "clear-data", "--yes"],
+            vec![
+                "dexdeck",
+                "logs",
+                "--scope",
+                "device",
+                "--device",
+                "serial",
+                "--min-priority",
+                "warning",
+                "--include-tag",
+                "App",
+                "--include-tag",
+                "Worker",
+                "--regex",
+                "failed|fatal",
+                "--errors",
+                "--buffer-mib",
+                "64",
+                "--export",
+                "logs.jsonl",
+                "--export-view",
+                "full",
+                "--export-format",
+                "jsonl",
+                "--record",
+                "record.txt",
+                "--overwrite",
+            ],
         ];
         for arguments in cases {
             assert!(Cli::try_parse_from(arguments).is_ok());
@@ -1686,6 +2405,32 @@ mod tests {
             ),
             DexdeckExitCode::InvalidUsage
         );
+    }
+
+    #[test]
+    fn rejects_conflicting_log_searches_and_focus_modes() {
+        assert!(Cli::try_parse_from(["dexdeck", "logs", "--text", "x", "--regex", "x"]).is_err());
+        assert!(Cli::try_parse_from(["dexdeck", "logs", "--crash-only", "--errors"]).is_err());
+        assert!(Cli::try_parse_from(["dexdeck", "logs", "--buffer-mib", "7"]).is_err());
+    }
+
+    #[test]
+    fn jsonl_log_errors_are_envelopes_on_stdout_only() -> Result<(), serde_json::Error> {
+        let cli = Cli::parse_from([
+            "dexdeck", "logs", "--scope", "device", "--device", "serial", "--regex", "[",
+            "--format", "jsonl",
+        ]);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(
+            execute(cli, terminals(), &mut stdout, &mut stderr),
+            DexdeckExitCode::InvalidUsage
+        );
+        assert!(stderr.is_empty());
+        let value: serde_json::Value = serde_json::from_slice(&stdout)?;
+        assert_eq!(value["type"], "error");
+        assert_eq!(value["error"]["category"], "logcat");
+        Ok(())
     }
 
     #[test]

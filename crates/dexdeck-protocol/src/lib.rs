@@ -14,9 +14,9 @@ pub use bridge::{
     BridgeComplete, BridgeEnvelope, BridgePayload, BridgeProtocolError, BridgeStreamValidator,
 };
 pub use cli::{
-    CliEnvelope, CliEvent, DegradedReason, ErrorCategory, ErrorCode, ModelFreshness, ModuleVariant,
-    ModulesSnapshot, OperationContext, OperationError, ProjectSnapshot, ProjectSupport,
-    VariantsSnapshot, WorkflowStepData,
+    CliEnvelope, CliEvent, DegradedReason, ErrorCategory, ErrorCode, LogStatusData, ModelFreshness,
+    ModuleVariant, ModulesSnapshot, OperationContext, OperationError, ProjectSnapshot,
+    ProjectSupport, VariantsSnapshot, WorkflowStepData,
 };
 pub use diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, SourceLocation};
 pub use job::{JobId, JobKind, JobRecord, JobState};

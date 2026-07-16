@@ -341,7 +341,7 @@ stop; normal workflows preserve data; cancellation leaves no process behind.
 - Persist nothing without an explicit action.
 - Commit: "feat(logcat): add export and recording actions"
 
-### F4.6 Expose structured logs through CLI — P1/High
+### F4.6 Expose structured logs through CLI — P1/High ✅
 
 - Implement logs with human/JSONL output, filters, scope, cancellation, export,
   and recording while keeping structured stdout clean.

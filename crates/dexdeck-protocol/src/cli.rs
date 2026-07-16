@@ -133,6 +133,9 @@ pub enum CliEvent {
     Log {
         record: LogRecord,
     },
+    LogStatus {
+        status: LogStatusData,
+    },
     JobFinished {
         job: JobRecord,
     },
@@ -148,6 +151,18 @@ pub struct WorkflowStepData {
     pub total: u32,
     pub name: String,
     pub state: JobState,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogStatusData {
+    pub connected: bool,
+    pub reconnects: u64,
+    pub batches_dropped: u64,
+    pub records_dropped: u64,
+    pub tracked_processes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -205,6 +220,16 @@ pub enum ErrorCode {
     CacheInvalid,
     #[serde(rename = "operation.cancelled")]
     Cancelled,
+    #[serde(rename = "logcat.unavailable")]
+    LogcatUnavailable,
+    #[serde(rename = "logcat.capture_failed")]
+    LogcatCaptureFailed,
+    #[serde(rename = "logcat.invalid_filter")]
+    LogcatInvalidFilter,
+    #[serde(rename = "logcat.export_failed")]
+    LogcatExportFailed,
+    #[serde(rename = "logcat.recording_failed")]
+    LogcatRecordingFailed,
     #[serde(rename = "internal.error")]
     Internal,
 }
@@ -221,6 +246,7 @@ pub enum ErrorCategory {
     Device,
     Emulator,
     Adb,
+    Logcat,
     Test,
     Cache,
     Permission,
