@@ -407,7 +407,7 @@ all processes; memory is bounded; no automatic disk writes occur.
   output, and rerun actions using shared job/result data.
 - Commit: "feat(tui): add tests and diagnostics"
 
-### F5.8 Verify result and diagnostic flows — P0/Critical
+### F5.8 Verify result and diagnostic flows — P0/Critical ✅
 
 - Add passing/failing unit/instrumentation fixtures, compiler/resource failures,
   malformed reports, editor fakes, and CLI/TUI parity assertions.
