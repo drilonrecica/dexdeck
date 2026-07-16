@@ -229,6 +229,8 @@ pub struct ProfileConfig {
     pub variant: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gradle_arguments: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_mode: Option<LaunchMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

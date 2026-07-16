@@ -6,6 +6,7 @@ mod debug_diagnostics;
 mod error;
 mod job;
 mod process;
+mod run_profile;
 mod runtime;
 mod secret;
 
@@ -23,6 +24,9 @@ pub use job::{
     JobSchedule, JobScheduler, JobSchedulerError, OutputBuffer,
 };
 pub use process::{CommandSpec, ProcessError, ProcessResult, ProcessSupervisor, TerminationReason};
+pub use run_profile::{
+    LaunchRequest, ResolvedRunProfile, RunProfileError, RunProfileResolver, RunProfileSelection,
+};
 pub use runtime::{
     ActionSender, AtomicIdGenerator, Clock, DEFAULT_ACTION_CAPACITY, DEFAULT_EFFECT_CAPACITY,
     DispatchError, EffectId, EffectRequest, IdGenerator, Reducer, Reduction, ReductionContext,

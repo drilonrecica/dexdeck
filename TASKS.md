@@ -266,7 +266,7 @@ changes become stale; failure never replaces a valid snapshot.
   arguments, protected internal flags, and scheduler integration.
 - Commit: "feat(gradle): execute queued Gradle tasks"
 
-### F3.5 Resolve run profiles — P1/High
+### F3.5 Resolve run profiles — P1/High ✅
 
 - Resolve module, variant, device, launch intent, Gradle properties, and secret
   environment references with validation and confirmation rules.
