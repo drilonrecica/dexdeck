@@ -10,6 +10,7 @@ mod embedded;
 mod refresh;
 mod runner;
 mod service;
+mod task_runner;
 
 pub use agp8::Agp8ModelBuilder;
 pub use agp9::Agp9ModelBuilder;
@@ -30,4 +31,8 @@ pub use service::{
     BridgeFuture, BridgeModelProvider, CachedProjectModel, FileProjectModelCache,
     ModelInputRegistrar, ModelServiceError, NoopModelInputRegistrar, ProjectModelCache,
     ProjectModelService, ProjectModelState, WatchingModelInputRegistrar,
+};
+pub use task_runner::{
+    GradleArgumentLayers, GradleOutput, GradleOutputStream, GradleRunError, GradleRunRequest,
+    GradleTaskRunner, validate_gradle_arguments,
 };
