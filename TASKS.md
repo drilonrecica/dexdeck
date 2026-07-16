@@ -322,7 +322,7 @@ stop; normal workflows preserve data; cancellation leaves no process behind.
   256 MiB; evict complete oldest entries and track drops.
 - Commit: "feat(logcat): add bounded log storage"
 
-### F4.3 Track application processes — P0/Critical
+### F4.3 Track application processes — P0/Critical ✅
 
 - Supervise ADB capture with bounded channels/batching and follow application
   UID/PIDs, secondary processes, restarts, reconnects, and scope changes.

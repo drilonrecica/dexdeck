@@ -9,5 +9,8 @@ mod sdk;
 pub use application::{ApplicationError, ApplicationService, InstallOptions};
 pub use device::{AdbClient, AdbError, DeviceSelector, DeviceTracker, parse_device_list};
 pub use emulator::{EmulatorError, EmulatorLaunch, EmulatorService};
-pub use logcat::{LogcatParser, ParserStats};
+pub use logcat::{
+    LogProcessSelector, LogcatError, LogcatParser, LogcatRequest, LogcatService, LogcatSession,
+    LogcatStatus, ParserStats,
+};
 pub use sdk::{Doctor, SdkError, SdkResolution, SdkResolver};

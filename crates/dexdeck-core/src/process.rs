@@ -9,7 +9,7 @@ use std::{
 
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
-    process::Command,
+    process::{Child, ChildStderr, ChildStdout, Command},
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
@@ -125,6 +125,15 @@ pub struct ProcessSupervisor {
     cancellation_grace: Duration,
 }
 
+#[derive(Debug)]
+pub struct StreamingChild {
+    child: Child,
+    process_tree: platform::ProcessTree,
+    stdout: Option<ChildStdout>,
+    stderr: Option<ChildStderr>,
+    cancellation_grace: Duration,
+}
+
 impl ProcessSupervisor {
     pub fn new(output_capacity: usize, cancellation_grace: Duration) -> Result<Self, ProcessError> {
         OutputBuffer::new(output_capacity).map_err(|_| ProcessError::InvalidOutputCapacity)?;
@@ -200,6 +209,42 @@ impl ProcessSupervisor {
         })
     }
 
+    pub async fn spawn_streaming(
+        &self,
+        spec: &CommandSpec,
+    ) -> Result<StreamingChild, ProcessError> {
+        let mut command = self.command(spec);
+        let authorization = platform::configure(&mut command, spec)?;
+        let mut child = command.spawn().map_err(|source| ProcessError::Spawn {
+            program: spec.program.clone(),
+            source,
+        })?;
+        let process_tree = platform::ProcessTree::attach(&child)?;
+        if let Some(authorization) = authorization {
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or(ProcessError::MissingPipe("helper stdin"))?;
+            stdin.write_all(&authorization).await?;
+            stdin.shutdown().await?;
+        }
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or(ProcessError::MissingPipe("stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or(ProcessError::MissingPipe("stderr"))?;
+        Ok(StreamingChild {
+            child,
+            process_tree,
+            stdout: Some(stdout),
+            stderr: Some(stderr),
+            cancellation_grace: self.cancellation_grace,
+        })
+    }
+
     fn command(&self, spec: &CommandSpec) -> Command {
         let mut command = Command::new(&spec.program);
         command
@@ -218,6 +263,49 @@ impl ProcessSupervisor {
                 .map(|(name, value)| (name, value.expose_os())),
         );
         command
+    }
+}
+
+impl StreamingChild {
+    pub fn take_stdout(&mut self) -> Result<ChildStdout, ProcessError> {
+        self.stdout
+            .take()
+            .ok_or(ProcessError::MissingPipe("stdout"))
+    }
+
+    pub fn take_stderr(&mut self) -> Result<ChildStderr, ProcessError> {
+        self.stderr
+            .take()
+            .ok_or(ProcessError::MissingPipe("stderr"))
+    }
+
+    pub async fn wait(
+        mut self,
+        cancel: CancellationToken,
+        force_cancel: CancellationToken,
+    ) -> Result<(Option<i32>, TerminationReason), ProcessError> {
+        let (status, termination) = tokio::select! {
+            status = self.child.wait() => (status?, TerminationReason::Exited),
+            () = force_cancel.cancelled() => {
+                self.process_tree.force()?;
+                (self.child.wait().await?, TerminationReason::ForcedCancellation)
+            }
+            () = cancel.cancelled() => {
+                self.process_tree.interrupt()?;
+                tokio::select! {
+                    status = self.child.wait() => (status?, TerminationReason::GracefulCancellation),
+                    () = force_cancel.cancelled() => {
+                        self.process_tree.force()?;
+                        (self.child.wait().await?, TerminationReason::ForcedCancellation)
+                    }
+                    () = tokio::time::sleep(self.cancellation_grace) => {
+                        self.process_tree.force()?;
+                        (self.child.wait().await?, TerminationReason::ForcedCancellation)
+                    }
+                }
+            }
+        };
+        Ok((exit_code(status), termination))
     }
 }
 
@@ -607,6 +695,32 @@ mod tests {
         let _ = task.await;
         tokio::time::sleep(Duration::from_millis(1100)).await;
         assert!(!marker.exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn streams_output_and_cancels_only_its_process_group()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = env::current_dir()?;
+        let spec = CommandSpec::new("/bin/sh", directory)?.args([
+            "-c",
+            "printf ready; trap 'exit 0' INT; while :; do sleep 1; done",
+        ]);
+        let supervisor = ProcessSupervisor::new(64, Duration::from_millis(100))?;
+        let mut child = supervisor.spawn_streaming(&spec).await?;
+        let mut stdout = child.take_stdout()?;
+        let mut bytes = [0_u8; 5];
+        stdout.read_exact(&mut bytes).await?;
+        assert_eq!(&bytes, b"ready");
+        drop(stdout);
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let (_, termination) = child.wait(cancel, CancellationToken::new()).await?;
+        assert!(matches!(
+            termination,
+            TerminationReason::GracefulCancellation | TerminationReason::ForcedCancellation
+        ));
         Ok(())
     }
 }

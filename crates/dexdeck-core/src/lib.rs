@@ -35,7 +35,9 @@ pub use log_buffer::{
 };
 #[cfg(windows)]
 pub use process::run_windows_process_helper;
-pub use process::{CommandSpec, ProcessError, ProcessResult, ProcessSupervisor, TerminationReason};
+pub use process::{
+    CommandSpec, ProcessError, ProcessResult, ProcessSupervisor, StreamingChild, TerminationReason,
+};
 pub use run_profile::{
     LaunchRequest, ResolvedRunProfile, RunProfileError, RunProfileResolver, RunProfileSelection,
 };
