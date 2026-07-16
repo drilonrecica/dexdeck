@@ -322,6 +322,9 @@ dependencies = [
 [[package]]
 name = "dexdeck-test-support"
 version = "0.2.0"
+dependencies = [
+ "tempfile",
+]
 
 [[package]]
 name = "dexdeck-tui"

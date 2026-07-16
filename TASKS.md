@@ -155,7 +155,7 @@ tree cancellation works; CLI emits valid schema-v1 output.
 
 ## Phase 2 — Android project discovery and Gradle modeling
 
-### F2.1 Create the Android fixture matrix — P0/High
+### F2.1 Create the Android fixture matrix — P0/High ✅
 
 - Add minimal Kotlin/Groovy, single/multi-module, multi-app, flavors, disabled
   variants, libraries, convention plugins, buildSrc, composites, custom tasks,
