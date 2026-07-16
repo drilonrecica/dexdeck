@@ -10,6 +10,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+dexdeck-protocol = { version = "0.2.0", path = "../dexdeck-protocol" }
 thiserror.workspace = true
 
 [dev-dependencies]

@@ -177,7 +177,7 @@ tree cancellation works; CLI emits valid schema-v1 output.
 - Commit a reproducible JAR/hash and make CI byte-compare rebuilt output.
 - Commit: "feat(gradle): add versioned model bridge"
 
-### F2.4 Implement the AGP 8 adapter — P0/Critical
+### F2.4 Implement the AGP 8 adapter — P0/Critical ✅
 
 - Use public Android Components APIs to model modules, dimensions, flavors,
   build types, variants, IDs, SDKs, tests, tasks, artifacts, and included builds.
