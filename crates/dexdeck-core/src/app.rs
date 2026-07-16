@@ -80,6 +80,10 @@ pub enum Action {
     CancelEffectRequested {
         effect_id: EffectId,
     },
+    WorkerFailed {
+        service: ServiceKind,
+        error: OperationError,
+    },
     ShutdownRequested,
     ShutdownCompleted,
 }
@@ -100,6 +104,17 @@ impl Action {
             _ => None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ServiceKind {
+    Config,
+    ProjectModel,
+    Jobs,
+    Android,
+    Tests,
+    Diagnostics,
+    Logcat,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -208,6 +223,23 @@ impl Reducer<AppState, Action, Effect> for AppReducer {
             },
             Action::ShutdownRequested if state.lifecycle != LifecycleState::Stopped => {
                 next.lifecycle = LifecycleState::ShuttingDown;
+            }
+            Action::WorkerFailed { service, error } => {
+                let subsystem = match service {
+                    ServiceKind::Jobs => Some(&mut next.jobs),
+                    ServiceKind::Android => Some(&mut next.devices),
+                    ServiceKind::Tests => Some(&mut next.tests),
+                    ServiceKind::Logcat => Some(&mut next.logcat),
+                    ServiceKind::Config | ServiceKind::ProjectModel | ServiceKind::Diagnostics => {
+                        None
+                    }
+                };
+                if let Some(subsystem) = subsystem {
+                    subsystem.status = SubsystemStatus::Failed;
+                    subsystem.last_error = Some(error.clone());
+                } else {
+                    next.project.last_error = Some(error.clone());
+                }
             }
             Action::ShutdownCompleted => next.lifecycle = LifecycleState::Stopped,
             Action::StartRequested { .. }

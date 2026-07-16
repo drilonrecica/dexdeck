@@ -418,7 +418,7 @@ structured, rerunnable, and source-addressable in CLI and TUI.
 
 ## Phase 6 — Complete operational TUI
 
-### F6.1 Compose DexDeck services — P0/Critical
+### F6.1 Compose DexDeck services — P0/Critical ✅
 
 - Wire config, model, watchers, jobs, SDK, devices, emulators, execution, tests,
   diagnostics, and Logcat through the action/effect runtime.

@@ -20,7 +20,7 @@ mod workflow;
 
 pub use app::{
     Action, AppReducer, AppState, Effect, EffectOutcome, LifecycleState, ModelStatus, ProjectState,
-    SubsystemState, SubsystemStatus, UiState,
+    ServiceKind, SubsystemState, SubsystemStatus, UiState,
 };
 pub use custom_command::{
     CommandPreview, CustomCommandError, CustomCommandService, TrustDecision, TrustFingerprint,
