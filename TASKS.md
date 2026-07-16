@@ -184,7 +184,7 @@ tree cancellation works; CLI emits valid schema-v1 output.
 - Verify minimum and upper AGP 8 fixtures.
 - Commit: "feat(gradle): model AGP 8 projects"
 
-### F2.5 Implement the AGP 9 adapter — P0/Critical
+### F2.5 Implement the AGP 9 adapter — P0/Critical ✅
 
 - Use AGP 9 public DSL/Variant APIs without removed legacy interfaces.
 - Produce the same normalized model and test 9.0 plus current 9.3 behavior.
