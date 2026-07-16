@@ -1,0 +1,63 @@
+name: Homebrew tap release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Reviewed DexDeck release tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  formula:
+    name: Generate and publish formula
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out DexDeck
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Check out official tap
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: drilonrecica/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: tap
+      - name: Download checksummed release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ inputs.tag }}" --pattern SHA256SUMS
+      - name: Generate formula from published checksums
+        run: |
+          version="${{ inputs.tag }}"
+          python3 scripts/generate-homebrew-formula.py --checksums SHA256SUMS --version "${version#v}" --output tap/Formula/dexdeck.rb
+          ruby -c tap/Formula/dexdeck.rb
+      - name: Commit formula to official tap
+        working-directory: tap
+        run: |
+          git config user.name "dexdeck-release"
+          git config user.email "release@dexdeck.invalid"
+          git add Formula/dexdeck.rb
+          git commit -s -m "feat(formula): add DexDeck 0.2.0"
+          git push
+
+  smoke:
+    name: Formula smoke on ${{ matrix.os }}
+    needs: formula
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Install from official tap
+        run: brew install drilonrecica/tap/dexdeck
+      - name: Verify installed binary and formula
+        run: |
+          dexdeck version
+          brew test drilonrecica/tap/dexdeck

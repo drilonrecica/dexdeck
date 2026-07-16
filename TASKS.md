@@ -513,7 +513,7 @@ compact terminals work; exit restores state without stopping external tools.
 - Test archive contents, permissions, hashes, and clean-machine installation.
 - Commit: "build(release): configure DexDeck distributions"
 
-### F7.8 Add Homebrew release flow — P1/High
+### F7.8 Add Homebrew release flow — P1/High ✅
 
 - Generate/test drilonrecica/tap/dexdeck against checksummed prebuilt artifacts
   and add formula installation smoke tests.
