@@ -240,10 +240,13 @@ impl TerminalSession {
 
         let previous_panic_hook: Arc<dyn Fn(&panic::PanicHookInfo<'_>) + Send + Sync + 'static> =
             panic::take_hook().into();
-        let panic_hook = Arc::clone(&previous_panic_hook);
         panic::set_hook(Box::new(move |info| {
             restore_terminal();
-            panic_hook(info);
+            let location = info.location().map_or_else(
+                || "unknown location".to_owned(),
+                |location| format!("{}:{}", location.file(), location.line()),
+            );
+            eprintln!("dexdeck: unexpected panic at {location}; terminal restored");
         }));
         Ok(Self {
             terminal,
