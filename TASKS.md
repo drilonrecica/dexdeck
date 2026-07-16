@@ -462,7 +462,7 @@ compact terminals work; exit restores state without stopping external tools.
 
 ## Phase 7 — Hardening, branding, packaging, and release
 
-### F7.1 Complete the CI matrix — P0/Critical
+### F7.1 Complete the CI matrix — P0/Critical ✅
 
 - Add config/protocol/cache/TUI/bridge/fixture checks and scheduled/release jobs
   for Android SDK, ADB/emulator, install/launch, instrumentation, fuzzing,

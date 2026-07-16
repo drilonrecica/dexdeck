@@ -90,6 +90,38 @@ jobs:
       - name: Check workspace
         run: cargo check --workspace --all-targets
 
+  focused-contracts:
+    name: ${{ matrix.suite }} contract
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: config-cache
+            command: cargo test -p dexdeck-config
+          - suite: protocol
+            command: cargo test -p dexdeck-protocol --test contracts
+          - suite: tui
+            command: cargo test -p dexdeck-tui --lib
+          - suite: bridge-fixtures
+            command: cargo test -p dexdeck-gradle --test modeling_matrix
+          - suite: fake-tools
+            command: cargo test -p dexdeck-test-support --test fake_tools
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.0 --profile minimal
+
+      - name: Run focused suite
+        run: ${{ matrix.command }}
+
+      - name: Verify suite left tracked files unchanged
+        run: git diff --exit-code
+
   logcat-stress:
     name: Logcat bounded stress
     runs-on: ubuntu-latest

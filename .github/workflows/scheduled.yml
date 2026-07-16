@@ -1,0 +1,108 @@
+name: Scheduled and release validation
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  android-sdk-adb:
+    name: Android SDK and ADB
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.0 --profile minimal
+      - name: Verify SDK and ADB integration
+        run: |
+          adb version
+          adb start-server
+          adb devices -l
+          cargo run -p dexdeck -- doctor
+          adb kill-server
+
+  emulator-daily-loop:
+    name: Emulator install, launch, and instrumentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.0 --profile minimal
+      - name: Run isolated Android daily-loop harness
+        run: bash scripts/ci-android-emulator.sh
+
+  parser-fuzz:
+    name: Parser fuzz smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Install nightly Rust
+        run: rustup toolchain install nightly --profile minimal
+      - name: Install pinned cargo-fuzz
+        run: cargo install cargo-fuzz --locked --version 0.13.1
+      - name: Fuzz bounded parsers
+        run: cargo +nightly fuzz run logcat_parser -- -max_total_time=120
+
+  platform-smoke:
+    name: ${{ matrix.target }} release smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.0 --profile minimal --target ${{ matrix.target }}
+      - name: Build release binary
+        run: cargo build -p dexdeck --release --target ${{ matrix.target }}
+      - name: Run version smoke test
+        shell: bash
+        run: |
+          suffix=""
+          if [[ "${{ runner.os }}" == "Windows" ]]; then suffix=".exe"; fi
+          "target/${{ matrix.target }}/release/dexdeck${suffix}" version
+
+  package-install:
+    name: Release package installation
+    if: github.event_name == 'release'
+    uses: ./.github/workflows/package-smoke.yml
+    with:
+      tag: ${{ github.event.release.tag_name }}
