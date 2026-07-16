@@ -490,7 +490,7 @@ compact terminals work; exit restores state without stopping external tools.
 - Add a concise threat model and automated privacy assertions.
 - Commit: "security: enforce local-only runtime behavior"
 
-### F7.5 Add the Deckmark asset system — P2/Medium
+### F7.5 Add the Deckmark asset system — P2/Medium ✅
 
 - Add reviewed source SVGs and deterministic PNGs for horizontal, compact,
   monochrome, and favicon forms plus terminal fallbacks.

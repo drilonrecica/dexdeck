@@ -176,6 +176,19 @@ jobs:
       - name: Audit dependencies, source, and runtime syscalls
         run: bash scripts/audit-local-only.sh
 
+  brand-assets:
+    name: Deckmark reproducibility
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Render reviewed source assets
+        run: bash scripts/render-brand-assets.sh
+      - name: Verify deterministic assets
+        run: git diff --exit-code -- brand
+
   bridge-reproducibility:
     name: Bridge reproducibility
     runs-on: ubuntu-latest
