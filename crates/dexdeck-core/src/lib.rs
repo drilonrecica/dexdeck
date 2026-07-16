@@ -5,6 +5,7 @@ pub mod brand;
 mod custom_command;
 mod debug_diagnostics;
 mod diagnostic_parser;
+mod editor;
 mod error;
 mod job;
 mod log_actions;
@@ -30,6 +31,7 @@ pub use debug_diagnostics::{
 };
 pub use dexdeck_protocol::LogFilterSpec;
 pub use diagnostic_parser::{DiagnosticNormalizer, DiagnosticParserStats};
+pub use editor::{EditorCommand, EditorError, EditorLauncher, EditorPreset};
 pub use error::DexError;
 pub use job::{
     CancellationDirective, DEFAULT_JOB_OUTPUT_BYTES, JOB_HISTORY_LIMIT, Job, JobFinish, JobRequest,

@@ -389,7 +389,7 @@ all processes; memory is bounded; no automatic disk writes occur.
   practical lint output into the normalized diagnostic schema.
 - Commit: "feat(core): normalize build diagnostics"
 
-### F5.5 Open source locations — P1/High
+### F5.5 Open source locations — P1/High ✅
 
 - Add argv templates/presets for supported editors and lexically parse VISUAL
   then EDITOR without shell execution.
