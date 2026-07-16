@@ -432,7 +432,7 @@ structured, rerunnable, and source-addressable in CLI and TUI.
 - Never communicate status through color alone.
 - Commit: "feat(tui): add responsive Lazuli dashboard"
 
-### F6.3 Add palette and input controls — P1/High
+### F6.3 Add palette and input controls — P1/High ✅
 
 - Add navigation, deterministic fuzzy palette, virtualized lists, help/search,
   configurable named actions, conflict detection, Vim preset, mouse, and panes.

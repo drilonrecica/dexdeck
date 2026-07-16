@@ -27,8 +27,8 @@ use ratatui::{
 use dexdeck_protocol::LogRecord;
 
 use crate::{
-    ColorCapability, GlyphMode, LazuliTheme, LogOverlay, LogWorkspaceAction, LogcatWorkspace,
-    TestWorkspace,
+    ColorCapability, FocusPane, GlyphMode, LazuliTheme, LogOverlay, LogWorkspaceAction,
+    LogcatWorkspace, TestWorkspace, fuzzy_actions,
 };
 
 pub const MINIMUM_WIDTH: u16 = 40;
@@ -106,6 +106,18 @@ struct ShellState {
     logcat_started: bool,
     logcat: LogcatWorkspace,
     tests: TestWorkspace,
+    overlay: ControlOverlay,
+    overlay_query: String,
+    focus: FocusPane,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ControlOverlay {
+    #[default]
+    None,
+    Palette,
+    Help,
+    Search,
 }
 
 pub fn run(options: ShellOptions) -> Result<(), ShellError> {
@@ -152,7 +164,8 @@ fn run_loop<B: Backend>(
         }
         if event::poll(Duration::from_millis(16))? {
             let event = event::read()?;
-            let overlay_open = state.logcat_active && state.logcat.overlay != LogOverlay::None;
+            let overlay_open = state.overlay != ControlOverlay::None
+                || (state.logcat_active && state.logcat.overlay != LogOverlay::None);
             if should_exit(&event) && !overlay_open {
                 return Ok(());
             }
@@ -161,6 +174,67 @@ fn run_loop<B: Backend>(
                     state.last_size = Some((width, height));
                     state.logcat.dirty = true;
                 }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('p'),
+                    modifiers: KeyModifiers::CONTROL,
+                    kind: KeyEventKind::Press,
+                    ..
+                }) => {
+                    state.overlay = ControlOverlay::Palette;
+                    state.overlay_query.clear();
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('?'),
+                    kind: KeyEventKind::Press,
+                    ..
+                }) if !state.logcat_active => state.overlay = ControlOverlay::Help,
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('/'),
+                    kind: KeyEventKind::Press,
+                    ..
+                }) if !state.logcat_active => {
+                    state.overlay = ControlOverlay::Search;
+                    state.overlay_query.clear();
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Esc,
+                    kind: KeyEventKind::Press,
+                    ..
+                }) if state.overlay != ControlOverlay::None => {
+                    state.overlay = ControlOverlay::None;
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Backspace,
+                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                    ..
+                }) if matches!(
+                    state.overlay,
+                    ControlOverlay::Palette | ControlOverlay::Search
+                ) =>
+                {
+                    state.overlay_query.pop();
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char(character),
+                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                    ..
+                }) if matches!(
+                    state.overlay,
+                    ControlOverlay::Palette | ControlOverlay::Search
+                ) =>
+                {
+                    state.overlay_query.push(character);
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Tab,
+                    kind: KeyEventKind::Press,
+                    ..
+                }) => state.focus = state.focus.next(),
+                Event::Key(KeyEvent {
+                    code: KeyCode::BackTab,
+                    kind: KeyEventKind::Press,
+                    ..
+                }) => state.focus = state.focus.previous(),
                 Event::Key(KeyEvent {
                     code: KeyCode::Char('l'),
                     modifiers: KeyModifiers::CONTROL,
@@ -235,6 +309,7 @@ fn run_loop<B: Backend>(
                     ..
                 }) => state.input_count = state.input_count.saturating_add(1),
                 Event::Mouse(mouse) if state.logcat_active => state.logcat.handle_mouse(mouse),
+                Event::Mouse(_) => state.input_count = state.input_count.saturating_add(1),
                 _ => {}
             }
         }
@@ -416,6 +491,50 @@ fn render(frame: &mut Frame<'_>, state: &mut ShellState, theme: LazuliTheme) {
         ))
         .style(Style::default().fg(theme.colors.text_muted)),
         rows[3],
+    );
+    render_control_overlay(frame, state, theme);
+}
+
+fn render_control_overlay(frame: &mut Frame<'_>, state: &ShellState, theme: LazuliTheme) {
+    if state.overlay == ControlOverlay::None {
+        return;
+    }
+    let area = frame.area();
+    let width = area.width.saturating_sub(4).min(72);
+    let height = area.height.saturating_sub(4).min(16);
+    let overlay = Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    let (title, content) = match state.overlay {
+        ControlOverlay::Palette => {
+            let matches = fuzzy_actions(&state.overlay_query);
+            let rows = matches
+                .iter()
+                .take(height.saturating_sub(3).into())
+                .map(|item| format!("{}  [{:?}]", item.action.label(), item.action))
+                .collect::<Vec<_>>()
+                .join("\n");
+            (" Commands ", format!("> {}\n{}", state.overlay_query, rows))
+        }
+        ControlOverlay::Help => (
+            " Help ",
+            "Ctrl+P commands   Tab/Shift+Tab panes\nCtrl+T tests      Ctrl+L Logcat\n/ search          ? help\nMouse wheel scrolls virtual lists\nEsc closes overlays; q exits".into(),
+        ),
+        ControlOverlay::Search => (" Search ", format!("Query: {}", state.overlay_query)),
+        ControlOverlay::None => return,
+    };
+    frame.render_widget(
+        Paragraph::new(content)
+            .style(
+                Style::default()
+                    .fg(theme.colors.text_primary)
+                    .bg(theme.colors.surface),
+            )
+            .block(panel(title, theme)),
+        overlay,
     );
 }
 
