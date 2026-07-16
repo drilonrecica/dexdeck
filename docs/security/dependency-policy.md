@@ -21,6 +21,10 @@ Platform runtimes may contain generic I/O primitives that are technically able
 to open sockets. They are acceptable only when DexDeck does not enable or call
 their networking APIs. Tokio's net feature is not enabled.
 
+CC0-1.0 is allowed for platform integration crates such as the selected
+filesystem watcher. It imposes no redistribution conditions and does not alter
+DexDeck's Apache-2.0 licensing.
+
 Build, CI, release, Gradle, Android SDK, package-manager, and user-command
 processes may independently use the network. They must not become product
 runtime dependencies or be represented as DexDeck-originated requests.
