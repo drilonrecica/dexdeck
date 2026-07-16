@@ -1,0 +1,8 @@
+#compdef dexdeck
+_arguments '*::arg:->args'
+case $state in
+  args)
+    _values 'dexdeck command' init doctor project modules variants devices emulators build install launch run rerun reinstall clean-reinstall stop uninstall clear-data test logs gradle emulator command version \
+      --project --sdk --module --variant --device --profile --format --gradle-arg --no-color --ascii --debug-log --config --yes
+  ;;
+esac

@@ -1,0 +1,39 @@
+.TH DEXDECK 1 "July 2026" "DexDeck 0.2.0" "User Commands"
+.SH NAME
+dexdeck \- private terminal control plane for Android development
+.SH SYNOPSIS
+.B dexdeck
+[GLOBAL OPTIONS] [COMMAND [OPTIONS]]
+.SH DESCRIPTION
+DexDeck models Android Gradle projects and provides build, run, test, device,
+emulator, task, diagnostic, and Logcat operations through a CLI and TUI.
+It contains no telemetry or direct network client.
+.SH GLOBAL OPTIONS
+.TP
+.BI --project " PATH"
+Select an Android project root or nested project path.
+.TP
+.BI --module " GRADLE_PATH"
+Select an exact Android module.
+.TP
+.BI --variant " NAME"
+Select an exact enabled variant.
+.TP
+.BI --device " SERIAL_OR_SELECTOR"
+Select an exact device or configured selector.
+.TP
+.BI --format " human|json|jsonl"
+Select output contract. Status remains on standard error.
+.SH COMMANDS
+init, doctor, project, modules, variants, devices, emulators, build, install, launch,
+run, rerun, reinstall, clean-reinstall, stop, uninstall, clear-data, test, logs,
+gradle, emulator, command, and version.
+.SH FILES
+.I .dexdeck/config.toml
+is optional shared project configuration. User configuration, cache, session,
+jobs, filters, and trust state use platform-standard private directories.
+.SH PRIVACY
+No analytics, telemetry, uploads, update checks, or direct HTTP requests. Raw
+logs are persisted only after explicit export or recording actions.
+.SH SEE ALSO
+The project documentation at https://github.com/drilonrecica/dexdeck.

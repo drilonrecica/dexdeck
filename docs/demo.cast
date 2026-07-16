@@ -1,0 +1,6 @@
+{"version":2,"width":84,"height":12,"timestamp":1784221217,"env":{"SHELL":"/bin/bash","TERM":"xterm-256color"}}
+[0.10,"o","$ dexdeck version\r\n"]
+[0.14,"o","DexDeck 0.2.0\r\n"]
+[0.90,"o","$ dexdeck --help\r\n"]
+[0.95,"o","A fast, private terminal control plane for Android development\r\n\r\n"]
+[1.00,"o","Usage: dexdeck [OPTIONS] [COMMAND]\r\n"]

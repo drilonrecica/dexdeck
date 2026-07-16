@@ -498,7 +498,7 @@ compact terminals work; exit restores state without stopping external tools.
   no prohibited imagery, and no bundled-font requirement.
 - Commit: "feat(brand): add Deckmark asset system"
 
-### F7.6 Add user and release documentation — P1/High
+### F7.6 Add user and release documentation — P1/High ✅
 
 - Write README, install/quick-start, CLI/config, AGP matrix, degraded mode,
   privacy, troubleshooting, known limitations, independence disclaimer, and
