@@ -59,6 +59,18 @@ impl AdbClient {
         self.run(arguments.iter().map(String::as_str)).await
     }
 
+    pub async fn enriched_devices(&self) -> Result<Vec<AndroidDevice>, AdbError> {
+        let mut devices = self.devices().await?;
+        for device in &mut devices {
+            if device.state == DeviceState::Online
+                && let Ok(properties) = self.shell(&device.serial, &["getprop"]).await
+            {
+                apply_properties(device, &properties);
+            }
+        }
+        Ok(devices)
+    }
+
     async fn run<I, S>(&self, arguments: I) -> Result<String, AdbError>
     where
         I: IntoIterator<Item = S>,

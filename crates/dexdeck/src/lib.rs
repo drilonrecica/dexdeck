@@ -5,17 +5,25 @@ use std::{
 };
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use dexdeck_android::{Doctor, SdkResolution, SdkResolver};
-use dexdeck_config::{
-    ConfigLayer, ConfigLoader, ConfigSources, GradleConfig, ProjectIdentity, StoragePaths,
+use dexdeck_android::{
+    AdbClient, ApplicationService, Doctor, EmulatorLaunch, EmulatorService, InstallOptions,
+    SdkResolution, SdkResolver,
 };
-use dexdeck_core::{ProcessSupervisor, SecretRedactor};
+use dexdeck_config::{
+    ConfigLayer, ConfigLoader, ConfigSources, GradleConfig, ProjectIdentity, ProjectPaths,
+    ResolvedConfig, StoragePaths,
+};
+use dexdeck_core::{
+    CustomCommandService, ProcessSupervisor, RunProfileResolver, RunProfileSelection,
+    SecretRedactor, TrustDecision,
+};
 use dexdeck_gradle::{
-    BridgeRunner, FileProjectModelCache, ProjectModelService, WatchingModelInputRegistrar,
-    discover_project,
+    BridgeRunner, FileProjectModelCache, GradleArgumentLayers, GradleRunRequest, GradleTaskRunner,
+    ProjectModelService, WatchingModelInputRegistrar, discover_project,
 };
 use dexdeck_protocol::{
-    CLI_SCHEMA_VERSION, CliEnvelope, ErrorCategory, ErrorCode, ModuleVariant, ModulesSnapshot,
+    CLI_SCHEMA_VERSION, CliEnvelope, CliEvent, DevicesSnapshot, EmulatorsSnapshot, ErrorCategory,
+    ErrorCode, JobId, JobKind, JobRecord, JobState, ModuleVariant, ModulesSnapshot,
     OperationContext, OperationError, ProjectModel, ProjectSnapshot, VariantsSnapshot,
 };
 use dexdeck_tui::ShellOptions;
@@ -113,16 +121,18 @@ enum CliCommand {
     Project(ProjectArgs),
     Modules(ListArgs),
     Variants(ListArgs),
-    Devices(ListArgs),
-    Emulators(ListArgs),
+    Devices(DevicesArgs),
+    Emulators(EmulatorsArgs),
     Build,
-    Install,
+    Install(InstallArgs),
     Launch,
-    Run,
+    Run(InstallArgs),
     Rerun,
-    Reinstall,
-    CleanReinstall,
+    Reinstall(InstallArgs),
+    CleanReinstall(CleanReinstallArgs),
     Stop,
+    Uninstall,
+    ClearData,
     Test,
     Logs,
     Gradle(GradleArgs),
@@ -146,6 +156,44 @@ enum ProjectCommand {
 struct ListArgs {
     #[command(subcommand)]
     command: ListCommand,
+}
+
+#[derive(Args)]
+struct DevicesArgs {
+    #[command(subcommand)]
+    command: DevicesCommand,
+}
+
+#[derive(Subcommand)]
+enum DevicesCommand {
+    List,
+    RestartAdb,
+}
+
+#[derive(Args)]
+struct EmulatorsArgs {
+    #[command(subcommand)]
+    command: EmulatorsCommand,
+}
+
+#[derive(Subcommand)]
+enum EmulatorsCommand {
+    List,
+    Inspect { name: String },
+}
+
+#[derive(Args, Clone, Copy, Debug, Default)]
+struct InstallArgs {
+    #[arg(long)]
+    downgrade: bool,
+    #[arg(long)]
+    grant_all: bool,
+}
+
+#[derive(Args, Clone, Copy, Debug, Default)]
+struct CleanReinstallArgs {
+    #[arg(long)]
+    grant_all: bool,
 }
 
 #[derive(Subcommand)]
@@ -192,17 +240,24 @@ impl CliCommand {
             | Self::Project(_)
             | Self::Modules(_)
             | Self::Variants(_)
-            | Self::Devices(_)
+            | Self::Devices(DevicesArgs {
+                command: DevicesCommand::List,
+            })
             | Self::Emulators(_)
             | Self::Version => OutputKind::Snapshot,
             Self::Build
-            | Self::Install
+            | Self::Devices(DevicesArgs {
+                command: DevicesCommand::RestartAdb,
+            })
+            | Self::Install(_)
             | Self::Launch
-            | Self::Run
+            | Self::Run(_)
             | Self::Rerun
-            | Self::Reinstall
-            | Self::CleanReinstall
+            | Self::Reinstall(_)
+            | Self::CleanReinstall(_)
             | Self::Stop
+            | Self::Uninstall
+            | Self::ClearData
             | Self::Test
             | Self::Logs
             | Self::Gradle(_)
@@ -214,7 +269,12 @@ impl CliCommand {
     fn allows_yes(&self) -> bool {
         matches!(
             self,
-            Self::CleanReinstall
+            Self::CleanReinstall(_)
+                | Self::Uninstall
+                | Self::ClearData
+                | Self::Install(_)
+                | Self::Run(_)
+                | Self::Reinstall(_)
                 | Self::Emulator(EmulatorArgs {
                     command: EmulatorCommand::Wipe { .. }
                 })
@@ -304,10 +364,827 @@ pub fn execute(
     ) {
         return execute_project_command(&cli, command, stdout, stderr);
     }
+    if matches!(
+        command,
+        CliCommand::Devices(_)
+            | CliCommand::Emulators(_)
+            | CliCommand::Emulator(_)
+            | CliCommand::Gradle(_)
+    ) {
+        return execute_android_tool_command(&cli, command, stdout, stderr);
+    }
+    if matches!(
+        command,
+        CliCommand::Build
+            | CliCommand::Install(_)
+            | CliCommand::Launch
+            | CliCommand::Run(_)
+            | CliCommand::Rerun
+            | CliCommand::Reinstall(_)
+            | CliCommand::CleanReinstall(_)
+            | CliCommand::Stop
+            | CliCommand::Uninstall
+            | CliCommand::ClearData
+    ) {
+        return execute_application_command(&cli, command, stdout, stderr);
+    }
+    if let CliCommand::Command(arguments) = command {
+        return execute_custom_command(&cli, arguments, terminal, stdout, stderr);
+    }
 
     // Feature handlers are wired in their implementation phases. Parsing and validation are
     // deliberately complete here so scripts can rely on one stable command grammar.
     DexdeckExitCode::Success
+}
+
+fn execute_android_tool_command(
+    cli: &Cli,
+    command: &CliCommand,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> DexdeckExitCode {
+    let project_root = cli.project.clone().or_else(|| std::env::current_dir().ok());
+    let configuration = cli.config.as_ref().and_then(|path| {
+        ConfigLoader
+            .load(&ConfigSources {
+                explicit: Some(path.clone()),
+                ..ConfigSources::default()
+            })
+            .ok()
+            .and_then(|loaded| loaded.resolved.android.sdk_path)
+    });
+    let tools = match SdkResolver::default().resolve(&SdkResolution {
+        cli: cli.sdk.clone(),
+        configuration,
+        project_root: project_root.clone(),
+        ..SdkResolution::default()
+    }) {
+        Ok(tools) => tools,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::ToolMissing,
+                ErrorCode::SdkMissing,
+                &error.to_string(),
+            );
+        }
+    };
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::Internal,
+                ErrorCode::Internal,
+                &error.to_string(),
+            );
+        }
+    };
+    let adb = Arc::new(AdbClient::new(
+        tools.adb.clone(),
+        tools.sdk_root.clone(),
+        ProcessSupervisor::default(),
+    ));
+    let result: Result<serde_json::Value, String> = runtime.block_on(async {
+        match command {
+            CliCommand::Devices(DevicesArgs {
+                command: DevicesCommand::List,
+            }) => {
+                let devices = adb
+                    .enriched_devices()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                serde_json::to_value(CliEnvelope::new(DevicesSnapshot {
+                    devices,
+                    selected_serial: None,
+                }))
+                .map_err(|error| error.to_string())
+            }
+            CliCommand::Devices(DevicesArgs {
+                command: DevicesCommand::RestartAdb,
+            }) => {
+                adb.restart_server()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                Ok(operation_success(JobKind::CustomCommand, "restart-adb"))
+            }
+            CliCommand::Emulators(arguments) => {
+                let devices = adb
+                    .enriched_devices()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let service = EmulatorService::new(
+                    tools.emulator.clone(),
+                    tools.sdk_root.clone(),
+                    avd_home().ok_or_else(|| "cannot resolve Android AVD home".to_owned())?,
+                    Arc::clone(&adb),
+                    ProcessSupervisor::default(),
+                );
+                let emulators = match &arguments.command {
+                    EmulatorsCommand::List => service
+                        .list(&devices)
+                        .await
+                        .map_err(|error| error.to_string())?,
+                    EmulatorsCommand::Inspect { name } => {
+                        vec![service.inspect(name).map_err(|error| error.to_string())?]
+                    }
+                };
+                serde_json::to_value(CliEnvelope::new(EmulatorsSnapshot { emulators }))
+                    .map_err(|error| error.to_string())
+            }
+            CliCommand::Emulator(arguments) => {
+                let devices = adb
+                    .enriched_devices()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let service = EmulatorService::new(
+                    tools.emulator.clone(),
+                    tools.sdk_root.clone(),
+                    avd_home().ok_or_else(|| "cannot resolve Android AVD home".to_owned())?,
+                    Arc::clone(&adb),
+                    ProcessSupervisor::default(),
+                );
+                let name = match &arguments.command {
+                    EmulatorCommand::Start { name }
+                    | EmulatorCommand::ColdBoot { name }
+                    | EmulatorCommand::Wipe { name }
+                    | EmulatorCommand::Stop { name } => name,
+                };
+                match &arguments.command {
+                    EmulatorCommand::Start { .. } => {
+                        service
+                            .start(
+                                name,
+                                EmulatorLaunch::default(),
+                                &devices,
+                                tokio_util::sync::CancellationToken::new(),
+                            )
+                            .await
+                            .map_err(|error| error.to_string())?;
+                    }
+                    EmulatorCommand::ColdBoot { .. } => {
+                        service
+                            .start(
+                                name,
+                                EmulatorLaunch {
+                                    cold_boot: true,
+                                    ..EmulatorLaunch::default()
+                                },
+                                &devices,
+                                tokio_util::sync::CancellationToken::new(),
+                            )
+                            .await
+                            .map_err(|error| error.to_string())?;
+                    }
+                    EmulatorCommand::Wipe { .. } => {
+                        service
+                            .start(
+                                name,
+                                EmulatorLaunch {
+                                    wipe_data: true,
+                                    wipe_confirmed: cli.yes,
+                                    cold_boot: false,
+                                },
+                                &devices,
+                                tokio_util::sync::CancellationToken::new(),
+                            )
+                            .await
+                            .map_err(|error| error.to_string())?;
+                    }
+                    EmulatorCommand::Stop { .. } => service
+                        .stop(name, &devices)
+                        .await
+                        .map_err(|error| error.to_string())?,
+                }
+                Ok(operation_success(JobKind::Emulator, name))
+            }
+            CliCommand::Gradle(arguments) => {
+                let start =
+                    project_root.ok_or_else(|| "cannot resolve project directory".to_owned())?;
+                let discovery = discover_project(&start, cli.project.is_some())
+                    .map_err(|error| error.to_string())?;
+                let runner = GradleTaskRunner::default();
+                let result = runner
+                    .run(GradleRunRequest {
+                        root: discovery.root,
+                        tasks: arguments.tasks.clone(),
+                        arguments: GradleArgumentLayers {
+                            cli: cli.gradle_arg.clone(),
+                            ..GradleArgumentLayers::default()
+                        },
+                        environment: std::collections::BTreeMap::new(),
+                        cancel: tokio_util::sync::CancellationToken::new(),
+                        force_cancel: tokio_util::sync::CancellationToken::new(),
+                        output: None,
+                        redactor: SecretRedactor::new(),
+                    })
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if result.exit_code != Some(0) {
+                    return Err(result.stderr.text_lossy());
+                }
+                Ok(operation_success(
+                    JobKind::Gradle,
+                    &arguments.tasks.join(" "),
+                ))
+            }
+            _ => Err("unsupported Android command".into()),
+        }
+    });
+    let value = match result {
+        Ok(value) => value,
+        Err(error) => {
+            let (exit, code) = if matches!(command, CliCommand::Gradle(_)) {
+                (DexdeckExitCode::OperationFailed, ErrorCode::GradleFailed)
+            } else {
+                (DexdeckExitCode::DeviceError, ErrorCode::EmulatorFailed)
+            };
+            return write_android_error(cli, stderr, exit, code, &error);
+        }
+    };
+    let write_result = match cli.format {
+        OutputFormat::Json | OutputFormat::Jsonl => serde_json::to_writer(&mut *stdout, &value)
+            .map_err(io::Error::other)
+            .and_then(|()| writeln!(stdout)),
+        OutputFormat::Human if command.output_kind() == OutputKind::Snapshot => {
+            write_snapshot_human(stdout, &value)
+        }
+        OutputFormat::Human => writeln!(stderr, "completed"),
+    };
+    if write_result.is_err() {
+        DexdeckExitCode::Internal
+    } else {
+        DexdeckExitCode::Success
+    }
+}
+
+struct OperationProject {
+    root: std::path::PathBuf,
+    model: ProjectModel,
+    config: ResolvedConfig,
+    paths: ProjectPaths,
+}
+
+fn load_operation_project(cli: &Cli) -> Result<OperationProject, String> {
+    let start = cli
+        .project
+        .clone()
+        .map_or_else(std::env::current_dir, Ok)
+        .map_err(|error| error.to_string())?;
+    let storage = StoragePaths::discover().map_err(|error| error.to_string())?;
+    let discovery =
+        discover_project(&start, cli.project.is_some()).map_err(|error| error.to_string())?;
+    let identity =
+        ProjectIdentity::from_path(&discovery.root).map_err(|error| error.to_string())?;
+    let paths = storage.project(&identity);
+    let loaded = ConfigLoader
+        .load(&ConfigSources {
+            shared: Some(discovery.root.join(".dexdeck/config.toml")),
+            user: Some(paths.user_config.clone()),
+            explicit: cli.config.clone(),
+            ..ConfigSources::default()
+        })
+        .map_err(|error| error.to_string())?;
+    let service = ProjectModelService::new(
+        Arc::new(BridgeRunner::new(
+            storage.bridge_cache_root(),
+            ProcessSupervisor::default(),
+        )),
+        Arc::new(FileProjectModelCache::new(storage)),
+        Arc::new(WatchingModelInputRegistrar::default()),
+    );
+    let mut state = service
+        .open(&discovery.root, true)
+        .map_err(|error| error.to_string())?;
+    if state.freshness != dexdeck_protocol::ModelFreshness::Current {
+        let runtime = tokio::runtime::Runtime::new().map_err(|error| error.to_string())?;
+        state = runtime
+            .block_on(service.refresh(
+                tokio_util::sync::CancellationToken::new(),
+                tokio_util::sync::CancellationToken::new(),
+                &SecretRedactor::new(),
+            ))
+            .or_else(|_| service.state())
+            .map_err(|error| error.to_string())?;
+    }
+    let model = state
+        .model
+        .ok_or_else(|| "project model is unavailable".to_owned())?;
+    Ok(OperationProject {
+        root: discovery.root,
+        model,
+        config: loaded.resolved,
+        paths,
+    })
+}
+
+fn execute_application_command(
+    cli: &Cli,
+    command: &CliCommand,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> DexdeckExitCode {
+    let project = match load_operation_project(cli) {
+        Ok(project) => project,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::ProjectUnavailable,
+                ErrorCode::ProjectNotFound,
+                &error,
+            );
+        }
+    };
+    let resolver = SdkResolver::default();
+    let tools = match resolver.resolve(&SdkResolution {
+        cli: cli.sdk.clone(),
+        configuration: project.config.android.sdk_path.clone(),
+        project_root: Some(project.root.clone()),
+        ..SdkResolution::default()
+    }) {
+        Ok(tools) => tools,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::ToolMissing,
+                ErrorCode::SdkMissing,
+                &error.to_string(),
+            );
+        }
+    };
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::Internal,
+                ErrorCode::Internal,
+                &error.to_string(),
+            );
+        }
+    };
+    let adb = Arc::new(AdbClient::new(
+        tools.adb,
+        tools.sdk_root,
+        ProcessSupervisor::default(),
+    ));
+    let devices = match runtime.block_on(adb.enriched_devices()) {
+        Ok(devices) => devices,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::DeviceError,
+                ErrorCode::DeviceUnavailable,
+                &error.to_string(),
+            );
+        }
+    };
+    let require_device = !matches!(command, CliCommand::Build);
+    let mut redactor = SecretRedactor::new();
+    let profile = match RunProfileResolver::resolve(
+        &project.model,
+        &project.config,
+        &devices,
+        &RunProfileSelection {
+            profile: cli.profile.clone(),
+            module: cli.module.clone(),
+            variant: cli.variant.clone(),
+            device: cli.device.clone(),
+            gradle_arguments: cli.gradle_arg.clone(),
+            require_device,
+        },
+        &mut redactor,
+    ) {
+        Ok(profile) => profile,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::InvalidUsage,
+                ErrorCode::InvalidConfiguration,
+                &error.to_string(),
+            );
+        }
+    };
+    let destructive = matches!(
+        command,
+        CliCommand::CleanReinstall(_) | CliCommand::Uninstall | CliCommand::ClearData
+    );
+    if (destructive || profile.release_confirmation_required) && !cli.yes {
+        return write_android_error(
+            cli,
+            stderr,
+            DexdeckExitCode::InvalidUsage,
+            ErrorCode::ConfirmationRequired,
+            "operation requires confirmation; rerun with --yes",
+        );
+    }
+    let kind = match command {
+        CliCommand::Build => JobKind::Build,
+        CliCommand::Install(_) => JobKind::Install,
+        CliCommand::Launch => JobKind::Launch,
+        _ => JobKind::Run,
+    };
+    let result: Result<(), String> = runtime.block_on(async {
+        let app = ApplicationService::new(Arc::clone(&adb));
+        let gradle = GradleTaskRunner::default();
+        let dexdeck_core::ResolvedRunProfile {
+            module,
+            variant,
+            device,
+            launch,
+            gradle_arguments,
+            gradle_properties,
+            environment,
+            ..
+        } = profile;
+        let serial = device.as_ref().map(|value| value.serial.as_str());
+        let package = variant
+            .application_id
+            .as_deref()
+            .ok_or_else(|| "application ID is missing".to_owned())?;
+        let install_options = match command {
+            CliCommand::Install(options)
+            | CliCommand::Run(options)
+            | CliCommand::Reinstall(options) => InstallOptions {
+                downgrade: options.downgrade,
+                grant_all: options.grant_all,
+            },
+            CliCommand::CleanReinstall(options) => InstallOptions {
+                downgrade: false,
+                grant_all: options.grant_all,
+            },
+            _ => InstallOptions::default(),
+        };
+        let assemble = || {
+            let task = variant
+                .tasks
+                .assemble
+                .clone()
+                .ok_or_else(|| "variant assemble task is missing".to_owned());
+            async {
+                let task = task?;
+                let mut env = environment;
+                for (name, value) in gradle_properties {
+                    env.insert(format!("ORG_GRADLE_PROJECT_{name}"), value);
+                }
+                let result = gradle
+                    .run(GradleRunRequest {
+                        root: project.root.clone(),
+                        tasks: vec![task],
+                        arguments: GradleArgumentLayers {
+                            cli: gradle_arguments,
+                            ..GradleArgumentLayers::default()
+                        },
+                        environment: env,
+                        cancel: tokio_util::sync::CancellationToken::new(),
+                        force_cancel: tokio_util::sync::CancellationToken::new(),
+                        output: None,
+                        redactor,
+                    })
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if result.exit_code == Some(0) {
+                    Ok(())
+                } else {
+                    Err(result.stderr.text_lossy())
+                }
+            }
+        };
+        match command {
+            CliCommand::Build => assemble().await,
+            CliCommand::Install(_) => {
+                let apks = match app.discover_apks(&module, &variant) {
+                    Ok(apks) => apks,
+                    Err(_) => {
+                        assemble().await?;
+                        app.discover_apks(&module, &variant)
+                            .map_err(|error| error.to_string())?
+                    }
+                };
+                app.install(
+                    serial.ok_or_else(|| "device is required".to_owned())?,
+                    &apks,
+                    install_options,
+                )
+                .await
+                .map_err(|error| error.to_string())
+            }
+            CliCommand::Launch => app
+                .launch(
+                    serial.ok_or_else(|| "device is required".to_owned())?,
+                    &variant,
+                    &launch,
+                )
+                .await
+                .map_err(|error| error.to_string()),
+            CliCommand::Run(_) | CliCommand::Reinstall(_) | CliCommand::CleanReinstall(_) => {
+                assemble().await?;
+                let serial = serial.ok_or_else(|| "device is required".to_owned())?;
+                if matches!(command, CliCommand::CleanReinstall(_)) {
+                    app.uninstall(serial, package)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                }
+                let apks = app
+                    .discover_apks(&module, &variant)
+                    .map_err(|error| error.to_string())?;
+                app.install(serial, &apks, install_options)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                app.launch(serial, &variant, &launch)
+                    .await
+                    .map_err(|error| error.to_string())
+            }
+            CliCommand::Rerun => {
+                let serial = serial.ok_or_else(|| "device is required".to_owned())?;
+                app.force_stop(serial, package)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                app.launch(serial, &variant, &launch)
+                    .await
+                    .map_err(|error| error.to_string())
+            }
+            CliCommand::Stop => app
+                .force_stop(
+                    serial.ok_or_else(|| "device is required".to_owned())?,
+                    package,
+                )
+                .await
+                .map_err(|error| error.to_string()),
+            CliCommand::Uninstall => app
+                .uninstall(
+                    serial.ok_or_else(|| "device is required".to_owned())?,
+                    package,
+                )
+                .await
+                .map_err(|error| error.to_string()),
+            CliCommand::ClearData => app
+                .clear_data(
+                    serial.ok_or_else(|| "device is required".to_owned())?,
+                    package,
+                )
+                .await
+                .map_err(|error| error.to_string()),
+            _ => Err("unsupported application command".into()),
+        }
+    });
+    match result {
+        Ok(()) => {
+            let value = operation_success(kind, "application-workflow");
+            let output = if cli.format == OutputFormat::Jsonl {
+                serde_json::to_writer(&mut *stdout, &value)
+                    .map_err(io::Error::other)
+                    .and_then(|()| writeln!(stdout))
+            } else {
+                writeln!(stderr, "completed")
+            };
+            if output.is_ok() {
+                DexdeckExitCode::Success
+            } else {
+                DexdeckExitCode::Internal
+            }
+        }
+        Err(error) => write_android_error(
+            cli,
+            stderr,
+            DexdeckExitCode::OperationFailed,
+            ErrorCode::GradleFailed,
+            &error,
+        ),
+    }
+}
+
+fn execute_custom_command(
+    cli: &Cli,
+    arguments: &CustomCommandArgs,
+    terminal: TerminalCapabilities,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> DexdeckExitCode {
+    let project = match load_operation_project(cli) {
+        Ok(project) => project,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::ProjectUnavailable,
+                ErrorCode::ProjectNotFound,
+                &error,
+            );
+        }
+    };
+    let CustomCommand::Run { name } = &arguments.command;
+    let Some(command) = project.config.commands.get(name) else {
+        return write_android_error(
+            cli,
+            stderr,
+            DexdeckExitCode::InvalidUsage,
+            ErrorCode::InvalidConfiguration,
+            &format!("custom command {name:?} does not exist"),
+        );
+    };
+    let service = match CustomCommandService::new(
+        &project.root,
+        project.paths.trust,
+        ProcessSupervisor::default(),
+    ) {
+        Ok(service) => service,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::InvalidUsage,
+                ErrorCode::TrustRequired,
+                &error.to_string(),
+            );
+        }
+    };
+    let mut redactor = SecretRedactor::new();
+    let preview = match service.preview(command, &redactor) {
+        Ok(preview) => preview,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::InvalidUsage,
+                ErrorCode::TrustRequired,
+                &error.to_string(),
+            );
+        }
+    };
+    if !preview.already_trusted {
+        let _ = writeln!(stderr, "Command: {}", preview.argv.join(" "));
+        let _ = writeln!(
+            stderr,
+            "Working directory: {}",
+            preview.working_directory.display()
+        );
+    }
+    let decision = if preview.already_trusted {
+        TrustDecision::Once
+    } else if terminal.stdin && terminal.stderr && cli.format == OutputFormat::Human {
+        let _ = write!(stderr, "Trust [o]nce, trust [p]roject, or [c]ancel? ");
+        let _ = stderr.flush();
+        let mut answer = String::new();
+        match std::io::stdin().read_line(&mut answer) {
+            Ok(_)
+                if answer.trim().eq_ignore_ascii_case("o")
+                    || answer.trim().eq_ignore_ascii_case("once") =>
+            {
+                TrustDecision::Once
+            }
+            Ok(_)
+                if answer.trim().eq_ignore_ascii_case("p")
+                    || answer.trim().eq_ignore_ascii_case("project") =>
+            {
+                TrustDecision::Project
+            }
+            _ => TrustDecision::Cancel,
+        }
+    } else {
+        TrustDecision::Once
+    };
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return write_android_error(
+                cli,
+                stderr,
+                DexdeckExitCode::Internal,
+                ErrorCode::Internal,
+                &error.to_string(),
+            );
+        }
+    };
+    match runtime.block_on(service.execute(
+        command,
+        decision,
+        terminal.stdin && terminal.stderr && cli.format == OutputFormat::Human,
+        &mut redactor,
+        tokio_util::sync::CancellationToken::new(),
+        tokio_util::sync::CancellationToken::new(),
+    )) {
+        Ok(result) if result.exit_code == Some(0) => {
+            let value = operation_success(JobKind::CustomCommand, name);
+            let write = if cli.format == OutputFormat::Jsonl {
+                serde_json::to_writer(&mut *stdout, &value)
+                    .map_err(io::Error::other)
+                    .and_then(|()| writeln!(stdout))
+            } else {
+                writeln!(stderr, "completed")
+            };
+            if write.is_ok() {
+                DexdeckExitCode::Success
+            } else {
+                DexdeckExitCode::Internal
+            }
+        }
+        Ok(result) => write_android_error(
+            cli,
+            stderr,
+            DexdeckExitCode::OperationFailed,
+            ErrorCode::Internal,
+            &result.stderr.text_lossy(),
+        ),
+        Err(error) => write_android_error(
+            cli,
+            stderr,
+            DexdeckExitCode::InvalidUsage,
+            ErrorCode::TrustRequired,
+            &error.to_string(),
+        ),
+    }
+}
+
+fn operation_success(kind: JobKind, summary: &str) -> serde_json::Value {
+    serde_json::to_value(CliEnvelope::new(CliEvent::JobFinished {
+        job: JobRecord {
+            id: JobId("cli".into()),
+            kind,
+            state: JobState::Succeeded,
+            project_identity: "cli".into(),
+            module: None,
+            variant: None,
+            device: None,
+            command_summary: vec![summary.into()],
+            started_at: "cli".into(),
+            finished_at: Some("cli".into()),
+            duration_ms: Some(0),
+            exit_code: Some(0),
+            diagnostics: vec![],
+        },
+    }))
+    .unwrap_or(serde_json::Value::Null)
+}
+
+fn write_snapshot_human(output: &mut dyn Write, value: &serde_json::Value) -> io::Result<()> {
+    if let Some(devices) = value.get("devices").and_then(serde_json::Value::as_array) {
+        for device in devices {
+            writeln!(
+                output,
+                "{}\t{}\t{}",
+                device["serial"].as_str().unwrap_or(""),
+                device["state"].as_str().unwrap_or("unknown"),
+                device["model"].as_str().unwrap_or("")
+            )?;
+        }
+    } else if let Some(emulators) = value.get("emulators").and_then(serde_json::Value::as_array) {
+        for emulator in emulators {
+            writeln!(
+                output,
+                "{}\t{}",
+                emulator["name"].as_str().unwrap_or(""),
+                emulator["runningSerial"].as_str().unwrap_or("stopped")
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn avd_home() -> Option<std::path::PathBuf> {
+    std::env::var_os("ANDROID_AVD_HOME")
+        .map(Into::into)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .map(|home| home.join(".android/avd"))
+        })
+}
+
+fn write_android_error(
+    cli: &Cli,
+    stderr: &mut dyn Write,
+    exit: DexdeckExitCode,
+    code: ErrorCode,
+    message: &str,
+) -> DexdeckExitCode {
+    if matches!(cli.format, OutputFormat::Json | OutputFormat::Jsonl) {
+        let event = CliEnvelope::new(CliEvent::Error {
+            error: OperationError {
+                code,
+                category: ErrorCategory::Adb,
+                message: message.into(),
+                context: OperationContext {
+                    operation: "android".into(),
+                    previous_model_usable: false,
+                    ..OperationContext::default()
+                },
+                suggested_action: None,
+            },
+        });
+        let _ = serde_json::to_writer(&mut *stderr, &event);
+        let _ = writeln!(stderr);
+    } else {
+        let _ = writeln!(stderr, "dexdeck: {message}");
+    }
+    exit
 }
 
 fn execute_doctor(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> DexdeckExitCode {
@@ -673,7 +1550,9 @@ fn validate(cli: &Cli, command: &CliCommand) -> Result<(), &'static str> {
         _ => {}
     }
     if cli.yes && !command.allows_yes() {
-        return Err("--yes is only valid for clean-reinstall and emulator wipe");
+        return Err(
+            "--yes is only valid for destructive actions and release-capable install workflows",
+        );
     }
     Ok(())
 }
@@ -739,6 +1618,11 @@ mod tests {
             vec!["dexdeck", "command", "run", "backend"],
             vec!["dexdeck", "gradle", "assembleDebug", "lint"],
             vec!["dexdeck", "clean-reinstall", "--yes"],
+            vec!["dexdeck", "devices", "restart-adb"],
+            vec!["dexdeck", "emulators", "inspect", "Pixel"],
+            vec!["dexdeck", "run", "--downgrade", "--grant-all", "--yes"],
+            vec!["dexdeck", "uninstall", "--yes"],
+            vec!["dexdeck", "clear-data", "--yes"],
         ];
         for arguments in cases {
             assert!(Cli::try_parse_from(arguments).is_ok());

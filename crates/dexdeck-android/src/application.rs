@@ -258,8 +258,6 @@ impl ApplicationService {
 fn component(package: &str, activity: &str) -> String {
     if activity.contains('/') {
         activity.into()
-    } else if activity.starts_with('.') {
-        format!("{package}/{activity}")
     } else {
         format!("{package}/{activity}")
     }

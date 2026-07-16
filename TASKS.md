@@ -291,7 +291,7 @@ changes become stale; failure never replaces a valid snapshot.
 - Add trust once/project/cancel, show argv/cwd, and invalidate on remote change.
 - Commit: "feat(core): guard trusted custom commands"
 
-### F3.9 Expose Android CLI operations — P1/High
+### F3.9 Expose Android CLI operations — P1/High ✅
 
 - Implement doctor, device/emulator, build/run lifecycle, Gradle, and custom
   command handlers with human/JSON/JSONL and stable errors.

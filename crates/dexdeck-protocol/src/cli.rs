@@ -177,6 +177,28 @@ pub enum ErrorCode {
     GradleFailed,
     #[serde(rename = "tool.missing")]
     ToolMissing,
+    #[serde(rename = "sdk.missing")]
+    SdkMissing,
+    #[serde(rename = "sdk.invalid")]
+    SdkInvalid,
+    #[serde(rename = "device.unavailable")]
+    DeviceUnavailable,
+    #[serde(rename = "device.unauthorized")]
+    DeviceUnauthorized,
+    #[serde(rename = "device.ambiguous")]
+    DeviceAmbiguous,
+    #[serde(rename = "emulator.failed")]
+    EmulatorFailed,
+    #[serde(rename = "emulator.boot_timeout")]
+    EmulatorBootTimeout,
+    #[serde(rename = "artifact.missing")]
+    ArtifactMissing,
+    #[serde(rename = "artifact.invalid")]
+    ArtifactInvalid,
+    #[serde(rename = "confirmation.required")]
+    ConfirmationRequired,
+    #[serde(rename = "trust.required")]
+    TrustRequired,
     #[serde(rename = "permission.denied")]
     PermissionDenied,
     #[serde(rename = "cache.invalid")]
