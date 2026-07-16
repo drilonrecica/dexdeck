@@ -190,7 +190,7 @@ tree cancellation works; CLI emits valid schema-v1 output.
 - Produce the same normalized model and test 9.0 plus current 9.3 behavior.
 - Commit: "feat(gradle): model AGP 9 projects"
 
-### F2.6 Embed and invoke the bridge — P0/Critical
+### F2.6 Embed and invoke the bridge — P0/Critical ✅
 
 - Extract to a content-addressed cache atomically, verify hashes, prefer project
   wrappers, require approval for system Gradle, and separate stdout from JSONL.
