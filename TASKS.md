@@ -285,7 +285,7 @@ changes become stale; failure never replaces a valid snapshot.
   Stop exactly as specified, with cancellation and destructive confirmations.
 - Commit: "feat(core): compose explicit run workflows"
 
-### F3.8 Guard custom commands — P0/Critical
+### F3.8 Guard custom commands — P0/Critical ✅
 
 - Execute argv-only commands with bounded output and validated cwd.
 - Add trust once/project/cancel, show argv/cwd, and invalidate on remote change.

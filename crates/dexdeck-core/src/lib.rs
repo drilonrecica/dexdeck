@@ -2,6 +2,7 @@
 
 mod app;
 pub mod brand;
+mod custom_command;
 mod debug_diagnostics;
 mod error;
 mod job;
@@ -14,6 +15,9 @@ mod workflow;
 pub use app::{
     Action, AppReducer, AppState, Effect, EffectOutcome, LifecycleState, ModelStatus, ProjectState,
     SubsystemState, SubsystemStatus, UiState,
+};
+pub use custom_command::{
+    CommandPreview, CustomCommandError, CustomCommandService, TrustDecision, TrustFingerprint,
 };
 pub use debug_diagnostics::{
     DEFAULT_DEBUG_BYTES, DEFAULT_DEBUG_ENTRIES, DebugDiagnosticError, DebugDiagnostics, DebugEntry,
