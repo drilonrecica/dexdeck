@@ -6,6 +6,7 @@ mod run_workspace;
 mod shell;
 mod test_workspace;
 mod theme;
+mod tooling_workspace;
 
 pub use controls::{
     FocusPane, KeyChord, KeyConflict, Keymap, NamedAction, PaletteMatch, VirtualList, fuzzy_actions,
@@ -18,3 +19,4 @@ pub use shell::{
 };
 pub use test_workspace::{TestWorkspace, TestWorkspaceAction};
 pub use theme::{ColorCapability, GlyphMode, LazuliTheme, SemanticColors};
+pub use tooling_workspace::{ToolCommandView, ToolingAction, ToolingTab, ToolingWorkspace};

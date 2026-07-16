@@ -444,7 +444,7 @@ structured, rerunnable, and source-addressable in CLI and TUI.
   selections, explicit workflows, queue, output, diagnostics, and history.
 - Commit: "feat(tui): add run and job workspaces"
 
-### F6.5 Add device and tooling views — P1/High
+### F6.5 Add device and tooling views — P1/High ✅
 
 - Add device selection, emulator actions, virtualized Gradle tasks, trusted
   custom commands, and actionable doctor results.

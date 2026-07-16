@@ -28,7 +28,7 @@ use dexdeck_protocol::LogRecord;
 
 use crate::{
     ColorCapability, FocusPane, GlyphMode, LazuliTheme, LogOverlay, LogWorkspaceAction,
-    LogcatWorkspace, RunWorkspace, TestWorkspace, fuzzy_actions,
+    LogcatWorkspace, RunWorkspace, TestWorkspace, ToolingTab, ToolingWorkspace, fuzzy_actions,
 };
 
 pub const MINIMUM_WIDTH: u16 = 40;
@@ -104,10 +104,12 @@ struct ShellState {
     logcat_active: bool,
     tests_active: bool,
     run_active: bool,
+    tooling_active: bool,
     logcat_started: bool,
     logcat: LogcatWorkspace,
     tests: TestWorkspace,
     run: RunWorkspace,
+    tooling: ToolingWorkspace,
     overlay: ControlOverlay,
     overlay_query: String,
     focus: FocusPane,
@@ -238,6 +240,22 @@ fn run_loop<B: Backend>(
                     ..
                 }) => state.focus = state.focus.previous(),
                 Event::Key(KeyEvent {
+                    code: KeyCode::Char(key @ ('d' | 'g')),
+                    modifiers: KeyModifiers::CONTROL,
+                    kind: KeyEventKind::Press,
+                    ..
+                }) => {
+                    state.tooling_active = true;
+                    state.run_active = false;
+                    state.tests_active = false;
+                    state.logcat_active = false;
+                    state.tooling.set_tab(if key == 'd' {
+                        ToolingTab::Devices
+                    } else {
+                        ToolingTab::GradleTasks
+                    });
+                }
+                Event::Key(KeyEvent {
                     code: KeyCode::Char('r'),
                     modifiers: KeyModifiers::CONTROL,
                     kind: KeyEventKind::Press,
@@ -246,6 +264,7 @@ fn run_loop<B: Backend>(
                     state.run_active = true;
                     state.tests_active = false;
                     state.logcat_active = false;
+                    state.tooling_active = false;
                     state.run.dirty = true;
                 }
                 Event::Key(KeyEvent {
@@ -257,6 +276,7 @@ fn run_loop<B: Backend>(
                     state.logcat_active = true;
                     state.tests_active = false;
                     state.run_active = false;
+                    state.tooling_active = false;
                     if !state.logcat_started {
                         state.logcat_started = true;
                         match backend.as_deref_mut() {
@@ -282,6 +302,7 @@ fn run_loop<B: Backend>(
                     state.tests_active = true;
                     state.logcat_active = false;
                     state.run_active = false;
+                    state.tooling_active = false;
                     state.tests.dirty = true;
                 }
                 Event::Key(KeyEvent {
@@ -291,6 +312,14 @@ fn run_loop<B: Backend>(
                 }) if state.tests_active => {
                     state.input_count = state.input_count.saturating_add(1);
                     let _ = state.tests.handle_key(key);
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char(key),
+                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                    ..
+                }) if state.tooling_active => {
+                    state.input_count = state.input_count.saturating_add(1);
+                    let _ = state.tooling.handle_key(key);
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char(key),
@@ -496,6 +525,8 @@ fn render(frame: &mut Frame<'_>, state: &mut ShellState, theme: LazuliTheme) {
         state.tests.render(frame, workspace, theme);
     } else if state.run_active {
         state.run.render(frame, workspace, theme);
+    } else if state.tooling_active {
+        state.tooling.render(frame, workspace, theme);
     } else {
         frame.render_widget(
             Paragraph::new("Project overview\n\nWaiting for project discovery.")
