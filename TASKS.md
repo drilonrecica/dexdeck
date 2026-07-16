@@ -353,7 +353,7 @@ stop; normal workflows preserve data; cancellation leaves no process behind.
   crash navigation, dropped status, and export/record indicators.
 - Commit: "feat(tui): add Logcat workspace"
 
-### F4.8 Stress the bounded pipeline — P0/Critical
+### F4.8 Stress the bounded pipeline — P0/Critical ✅
 
 - Test high volume, slow consumers, filter churn, reconnect storms, maximum
   buffers, parser throughput, latency, allocations, and input responsiveness.

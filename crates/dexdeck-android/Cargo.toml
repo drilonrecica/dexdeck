@@ -21,7 +21,13 @@ serde_json.workspace = true
 regex.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
 tempfile.workspace = true
+
+[[bench]]
+name = "logcat_pipeline"
+harness = false
 
 [lints]
 workspace = true

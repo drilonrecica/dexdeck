@@ -49,7 +49,26 @@ fn main() -> ExitCode {
     if response.delay_ms > 0 {
         thread::sleep(Duration::from_millis(response.delay_ms));
     }
-    print!("{}", response.stdout);
-    eprint!("{}", response.stderr);
+    let mut stdout = std::io::stdout().lock();
+    let mut stderr = std::io::stderr().lock();
+    let _ = stdout.write_all(response.stdout.as_bytes());
+    let _ = stdout.write_all(&response.stdout_bytes);
+    let _ = stdout.flush();
+    let _ = stderr.write_all(response.stderr.as_bytes());
+    let _ = stderr.flush();
+    for chunk in &response.chunks {
+        if chunk.delay_ms > 0 {
+            thread::sleep(Duration::from_millis(chunk.delay_ms));
+        }
+        let _ = stdout.write_all(&chunk.stdout);
+        let _ = stdout.flush();
+        let _ = stderr.write_all(&chunk.stderr);
+        let _ = stderr.flush();
+    }
+    if response.persistent {
+        loop {
+            thread::sleep(Duration::from_secs(1));
+        }
+    }
     ExitCode::from(u8::try_from(response.exit_code.clamp(0, 255)).unwrap_or(1))
 }

@@ -90,6 +90,22 @@ jobs:
       - name: Check workspace
         run: cargo check --workspace --all-targets
 
+  logcat-stress:
+    name: Logcat bounded stress
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.0 --profile minimal
+
+      - name: Run release-mode bounded Logcat stress
+        run: cargo test -p dexdeck-core --release --test logcat_stress -- --ignored
+
   bridge-reproducibility:
     name: Bridge reproducibility
     runs-on: ubuntu-latest

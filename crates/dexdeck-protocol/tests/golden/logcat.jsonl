@@ -1,0 +1,2 @@
+{"schemaVersion":1,"type":"log","record":{"timestamp":"2026-07-16 12:00:00.123456 UTC","processId":42,"threadId":43,"userId":10123,"priority":"error","tag":"App","message":"failed","package":"com.example","process":"com.example","continuation":false,"crashBoundary":false,"groupId":7,"marker":"javaCrash"}}
+{"schemaVersion":1,"type":"logStatus","status":{"connected":true,"reconnects":2,"batchesDropped":1,"recordsDropped":256,"trackedProcesses":3}}

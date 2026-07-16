@@ -377,7 +377,9 @@ impl LogcatService {
                 Ok(child) => child,
                 Err(error) => {
                     status_tx.send_modify(|status| status.last_error = Some(error.to_string()));
-                    wait_backoff(&cancel, backoff).await?;
+                    if !wait_backoff(&cancel, backoff).await {
+                        return Ok(());
+                    }
                     backoff = (backoff * 2).min(Duration::from_secs(10));
                     continue;
                 }
@@ -448,7 +450,9 @@ impl LogcatService {
                 return Ok(());
             }
             status_tx.send_modify(|status| status.reconnects = status.reconnects.saturating_add(1));
-            wait_backoff(&cancel, backoff).await?;
+            if !wait_backoff(&cancel, backoff).await {
+                return Ok(());
+            }
             backoff = (backoff * 2).min(Duration::from_secs(10));
         }
     }
@@ -518,10 +522,10 @@ fn flush_batch(
     }
 }
 
-async fn wait_backoff(cancel: &CancellationToken, delay: Duration) -> Result<(), LogcatError> {
+async fn wait_backoff(cancel: &CancellationToken, delay: Duration) -> bool {
     tokio::select! {
-        () = cancel.cancelled() => Err(LogcatError::Cancelled),
-        () = tokio::time::sleep(delay) => Ok(()),
+        () = cancel.cancelled() => false,
+        () = tokio::time::sleep(delay) => true,
     }
 }
 
@@ -672,6 +676,8 @@ pub enum LogcatError {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     #[test]
@@ -766,5 +772,78 @@ mod tests {
             Some("com.example.app"),
             &snapshot
         ));
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(48))]
+
+        #[test]
+        fn arbitrary_chunking_matches_whole_stream(chunk_sizes in prop::collection::vec(1_usize..64, 1..32)) {
+            let input = b"07-16 12:01:02.124 42 43 I App: ready\ncontinuation\n07-16 12:01:03.125 42 44 E App: failed\n";
+            let expected = LogcatParser::new().push(input);
+            let mut parser = LogcatParser::new();
+            let mut actual = Vec::new();
+            let mut offset = 0;
+            for size in chunk_sizes.into_iter().cycle() {
+                if offset >= input.len() {
+                    break;
+                }
+                let end = (offset + size).min(input.len());
+                actual.extend(parser.push(&input[offset..end]));
+                offset = end;
+            }
+            prop_assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn malformed_binary_input_never_retains_an_oversized_partial(
+            bytes in prop::collection::vec(any::<u8>(), 0..300_000)
+        ) {
+            let mut parser = LogcatParser::new();
+            for chunk in bytes.chunks(137) {
+                let _ = parser.push(chunk);
+                prop_assert!(parser.partial.len() <= MAX_LOGCAT_LINE_BYTES);
+            }
+            let _ = parser.finish();
+            prop_assert!(parser.partial.is_empty());
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reconnects_repeated_fake_streams_and_cancels_without_orphans()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::{fs, os::unix::fs::PermissionsExt};
+
+        let directory = tempfile::tempdir()?;
+        let adb = directory.path().join("adb");
+        fs::write(
+            &adb,
+            "#!/bin/sh\ncount=\"$0.count\"\nn=$(cat \"$count\" 2>/dev/null || echo 0)\nn=$((n + 1))\necho \"$n\" > \"$count\"\nprintf '2026-07-16 12:01:%02d.123456 UTC 42 43 I App: reconnect %d\\n' \"$n\" \"$n\"\nexit 1\n",
+        )?;
+        fs::set_permissions(&adb, fs::Permissions::from_mode(0o755))?;
+        let service = LogcatService::new(
+            adb,
+            directory.path().to_path_buf(),
+            ProcessSupervisor::default(),
+        );
+        let mut session = service
+            .start(LogcatRequest {
+                device_serial: "serial".into(),
+                package: None,
+                scope: LogScope::Device,
+                process: None,
+            })
+            .await?;
+        let first = tokio::time::timeout(Duration::from_secs(2), session.recv())
+            .await?
+            .ok_or("first fake Logcat stream closed")?;
+        let second = tokio::time::timeout(Duration::from_secs(3), session.recv())
+            .await?
+            .ok_or("second fake Logcat stream closed")?;
+        assert_ne!(first[0].message, second[0].message);
+        assert!(session.status().reconnects >= 1);
+        session.shutdown().await?;
+        Ok(())
     }
 }

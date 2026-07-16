@@ -24,6 +24,23 @@ pub struct FakeToolResponse {
     pub exit_code: i32,
     #[serde(default)]
     pub delay_ms: u64,
+    #[serde(default)]
+    pub stdout_bytes: Vec<u8>,
+    #[serde(default)]
+    pub chunks: Vec<FakeToolChunk>,
+    #[serde(default)]
+    pub persistent: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FakeToolChunk {
+    #[serde(default)]
+    pub delay_ms: u64,
+    #[serde(default)]
+    pub stdout: Vec<u8>,
+    #[serde(default)]
+    pub stderr: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]

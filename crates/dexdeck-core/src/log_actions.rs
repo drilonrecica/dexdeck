@@ -426,4 +426,19 @@ mod tests {
         assert!(std::fs::read_to_string(path)?.contains("failed"));
         Ok(())
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn disk_failure_stops_recording_visibly() -> Result<(), Box<dyn std::error::Error>> {
+        let path = Path::new("/dev/full");
+        if !path.exists() {
+            return Ok(());
+        }
+        let recorder = LogRecorder::start(path, LogExportFormat::Text, true)?;
+        recorder.try_record(vec![record("cannot persist").record])?;
+        let status = recorder.stop().await?;
+        assert!(!status.active);
+        assert!(status.error.is_some());
+        Ok(())
+    }
 }

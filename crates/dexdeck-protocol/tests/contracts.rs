@@ -2,8 +2,9 @@ use std::path::PathBuf;
 
 use dexdeck_protocol::{
     AndroidModule, BridgeComplete, BridgeEnvelope, BridgePayload, BridgeProtocolError,
-    BridgeStreamValidator, BuildInfo, CliEnvelope, CliEvent, JobId, JobKind, ModelFreshness,
-    ModuleKind, ModulesSnapshot, ProjectModel, ProjectSnapshot, ProjectSupport, VariantsSnapshot,
+    BridgeStreamValidator, BuildInfo, CliEnvelope, CliEvent, JobId, JobKind, LogMarkerKind,
+    LogPriority, LogRecord, LogStatusData, ModelFreshness, ModuleKind, ModulesSnapshot,
+    ProjectModel, ProjectSnapshot, ProjectSupport, VariantsSnapshot,
 };
 
 #[test]
@@ -82,6 +83,45 @@ fn cli_event_matches_golden_contract() -> Result<(), serde_json::Error> {
     });
     let actual = serde_json::to_string(&event)?;
     assert_eq!(actual, include_str!("golden/job-started.jsonl").trim());
+    Ok(())
+}
+
+#[test]
+fn logcat_jsonl_matches_golden_contract() -> Result<(), serde_json::Error> {
+    let log = CliEnvelope::new(CliEvent::Log {
+        record: LogRecord {
+            timestamp: "2026-07-16 12:00:00.123456 UTC".into(),
+            process_id: 42,
+            thread_id: 43,
+            user_id: Some(10123),
+            priority: LogPriority::Error,
+            tag: "App".into(),
+            message: "failed".into(),
+            package: Some("com.example".into()),
+            process: Some("com.example".into()),
+            continuation: false,
+            crash_boundary: false,
+            group_id: Some(7),
+            marker: Some(LogMarkerKind::JavaCrash),
+            truncated: false,
+        },
+    });
+    let status = CliEnvelope::new(CliEvent::LogStatus {
+        status: LogStatusData {
+            connected: true,
+            reconnects: 2,
+            batches_dropped: 1,
+            records_dropped: 256,
+            tracked_processes: 3,
+            message: None,
+        },
+    });
+    let actual = format!(
+        "{}\n{}\n",
+        serde_json::to_string(&log)?,
+        serde_json::to_string(&status)?
+    );
+    assert_eq!(actual, include_str!("golden/logcat.jsonl"));
     Ok(())
 }
 

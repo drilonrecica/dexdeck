@@ -237,4 +237,38 @@ mod tests {
         assert!(!crash.matches(&record("App", None, "ordinary error")));
         Ok(())
     }
+
+    #[tokio::test]
+    async fn stale_filter_rebuild_cannot_replace_a_newer_generation()
+    -> Result<(), tokio::task::JoinError> {
+        let index = LogFilterIndex::default();
+        let many = (0..50_000)
+            .map(|sequence| SequencedLogRecord {
+                sequence,
+                record: record("old", None, "old"),
+            })
+            .collect();
+        let old = index.rebuild(
+            many,
+            LogFilterSpec {
+                include_tags: vec!["old".into()],
+                ..LogFilterSpec::default()
+            },
+        );
+        let new = index.rebuild(
+            vec![SequencedLogRecord {
+                sequence: 99,
+                record: record("new", None, "new"),
+            }],
+            LogFilterSpec {
+                include_tags: vec!["new".into()],
+                ..LogFilterSpec::default()
+            },
+        );
+        old.await?;
+        new.await?;
+        assert_eq!(index.snapshot().generation, 2);
+        assert_eq!(index.snapshot().sequences, [99]);
+        Ok(())
+    }
 }

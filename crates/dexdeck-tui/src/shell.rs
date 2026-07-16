@@ -122,28 +122,7 @@ fn run_loop<B: Backend>(
         if state.logcat_active
             && let Some(backend) = backend.as_deref_mut()
         {
-            for _ in 0..MAX_LOG_NOTIFICATIONS_PER_TICK {
-                let Some(notification) = backend.try_recv() else {
-                    break;
-                };
-                match notification {
-                    LogcatBackendEvent::Records(records) => state.logcat.ingest(records),
-                    LogcatBackendEvent::Status(status) => state.logcat.set_status(status),
-                    LogcatBackendEvent::Error(error) => {
-                        state
-                            .logcat
-                            .set_status(format!("Logcat unavailable: {error}"));
-                    }
-                    LogcatBackendEvent::Recording(active) => {
-                        state.logcat.recording = active;
-                        state.logcat.dirty = true;
-                    }
-                    LogcatBackendEvent::Exporting(active) => {
-                        state.logcat.exporting = active;
-                        state.logcat.dirty = true;
-                    }
-                }
-            }
+            drain_logcat_notifications(&mut state, backend);
         }
         if event::poll(Duration::from_millis(16))? {
             let event = event::read()?;
@@ -219,6 +198,32 @@ fn run_loop<B: Backend>(
             last_draw = Instant::now();
         }
     }
+}
+
+fn drain_logcat_notifications(state: &mut ShellState, backend: &mut dyn LogcatBackend) -> usize {
+    let mut drained = 0;
+    for _ in 0..MAX_LOG_NOTIFICATIONS_PER_TICK {
+        let Some(notification) = backend.try_recv() else {
+            break;
+        };
+        drained += 1;
+        match notification {
+            LogcatBackendEvent::Records(records) => state.logcat.ingest(records),
+            LogcatBackendEvent::Status(status) => state.logcat.set_status(status),
+            LogcatBackendEvent::Error(error) => state
+                .logcat
+                .set_status(format!("Logcat unavailable: {error}")),
+            LogcatBackendEvent::Recording(active) => {
+                state.logcat.recording = active;
+                state.logcat.dirty = true;
+            }
+            LogcatBackendEvent::Exporting(active) => {
+                state.logcat.exporting = active;
+                state.logcat.dirty = true;
+            }
+        }
+    }
+    drained
 }
 
 fn should_exit(event: &Event) -> bool {
@@ -432,6 +437,8 @@ pub enum ShellError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
     use super::*;
@@ -470,5 +477,42 @@ mod tests {
         assert!(should_exit(&key(KeyCode::Esc, KeyModifiers::NONE)));
         assert!(should_exit(&key(KeyCode::Char('c'), KeyModifiers::CONTROL)));
         assert!(!should_exit(&key(KeyCode::Char('x'), KeyModifiers::NONE)));
+    }
+
+    #[test]
+    fn drains_a_fixed_number_of_log_notifications_per_tick() {
+        struct Backend(VecDeque<LogcatBackendEvent>);
+        impl LogcatBackend for Backend {
+            fn start(&mut self) -> Result<(), String> {
+                Ok(())
+            }
+            fn try_recv(&mut self) -> Option<LogcatBackendEvent> {
+                self.0.pop_front()
+            }
+            fn set_device_scope(&mut self, _: bool) -> Result<(), String> {
+                Ok(())
+            }
+            fn select_process(&mut self) -> Result<(), String> {
+                Ok(())
+            }
+            fn copy(&mut self, _: bool) -> Result<(), String> {
+                Ok(())
+            }
+            fn export(&mut self) -> Result<(), String> {
+                Ok(())
+            }
+            fn toggle_recording(&mut self) -> Result<(), String> {
+                Ok(())
+            }
+            fn stop(&mut self) {}
+        }
+        let mut backend = Backend(
+            (0..20)
+                .map(|index| LogcatBackendEvent::Status(format!("status {index}")))
+                .collect(),
+        );
+        let mut state = ShellState::default();
+        assert_eq!(drain_logcat_notifications(&mut state, &mut backend), 8);
+        assert_eq!(backend.0.len(), 12);
     }
 }
