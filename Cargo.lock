@@ -281,9 +281,12 @@ dependencies = [
 name = "dexdeck-android"
 version = "0.2.0"
 dependencies = [
+ "dexdeck-core",
  "dexdeck-protocol",
  "tempfile",
  "thiserror",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

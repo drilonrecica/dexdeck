@@ -247,7 +247,7 @@ changes become stale; failure never replaces a valid snapshot.
 - Diagnose missing packages and print commands without silent installation.
 - Commit: "feat(android): resolve SDK tools"
 
-### F3.2 Track ADB devices — P0/Critical
+### F3.2 Track ADB devices — P0/Critical ✅
 
 - Start ADB lazily; consume track-devices with restart/backoff; enrich model,
   product, API, transport, classification, and authorization state.
