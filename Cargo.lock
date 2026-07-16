@@ -105,10 +105,12 @@ version = "0.2.0"
 dependencies = [
  "dexdeck-protocol",
  "proptest",
+ "rustix",
  "serde_json",
  "thiserror",
  "tokio",
  "tokio-util",
+ "windows-sys",
 ]
 
 [[package]]
