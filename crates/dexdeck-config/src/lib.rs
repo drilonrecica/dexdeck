@@ -5,6 +5,7 @@ mod config_error;
 mod envelope;
 mod error;
 mod identity;
+mod model_cache;
 mod parse;
 mod paths;
 mod resolve;
@@ -18,6 +19,9 @@ pub use config_error::{ConfigError, ConfigWarning};
 pub use envelope::VersionedEnvelope;
 pub use error::StorageError;
 pub use identity::{PROJECT_NAMESPACE_VERSION, ProjectIdentity};
+pub use model_cache::{
+    ModelFingerprint, ModelInput, discover_model_inputs, fingerprint, load_model, save_model,
+};
 pub use parse::{
     ConfigDocument, ConfigScope, ParsedConfig, parse_config, write_config_document,
     write_config_migration,
