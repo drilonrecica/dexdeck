@@ -328,7 +328,7 @@ stop; normal workflows preserve data; cancellation leaves no process behind.
   UID/PIDs, secondary processes, restarts, reconnects, and scope changes.
 - Commit: "feat(logcat): track application processes"
 
-### F4.4 Add filters and search — P1/High
+### F4.4 Add filters and search — P1/High ✅
 
 - Implement priority/tag/package/process include/exclude, text/regex, case,
   crash-only, error focus, compiled caching, and local saved presets.

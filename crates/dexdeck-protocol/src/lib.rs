@@ -20,7 +20,9 @@ pub use cli::{
 };
 pub use diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, SourceLocation};
 pub use job::{JobId, JobKind, JobRecord, JobState};
-pub use log::{LogMarkerKind, LogPriority, LogRecord};
+pub use log::{
+    LogFilterSpec, LogMarkerKind, LogPriority, LogRecord, LogTextSearch, SavedLogFilterPreset,
+};
 pub use model::{
     AndroidModule, Artifact, ArtifactKind, BuildInfo, BuildType, FlavorDimension, GradleTask,
     IncludedBuild, LaunchComponent, ModuleKind, ProductFlavor, ProjectModel, TaskKind,
@@ -33,3 +35,4 @@ pub const BRIDGE_PROTOCOL_VERSION: u32 = 1;
 pub const CONFIG_SCHEMA_VERSION: u32 = 1;
 pub const CACHE_SCHEMA_VERSION: u32 = 1;
 pub const JOB_HISTORY_SCHEMA_VERSION: u32 = 1;
+pub const LOG_FILTERS_SCHEMA_VERSION: u32 = 1;

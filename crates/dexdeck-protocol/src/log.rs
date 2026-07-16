@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LogPriority {
     Verbose,
@@ -11,7 +11,7 @@ pub enum LogPriority {
     Fatal,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LogMarkerKind {
     JavaCrash,
@@ -42,4 +42,44 @@ pub struct LogRecord {
     pub marker: Option<LogMarkerKind>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "camelCase")]
+pub enum LogTextSearch {
+    Plain(String),
+    Regex(String),
+}
+
+#[derive(Clone, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogFilterSpec {
+    pub minimum_priority: Option<LogPriority>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include_tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include_packages: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_packages: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include_processes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_processes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_search: Option<LogTextSearch>,
+    #[serde(default)]
+    pub case_sensitive: bool,
+    #[serde(default)]
+    pub crash_only: bool,
+    #[serde(default)]
+    pub errors: bool,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedLogFilterPreset {
+    pub name: String,
+    pub filter: LogFilterSpec,
 }

@@ -7,6 +7,7 @@ mod debug_diagnostics;
 mod error;
 mod job;
 mod log_buffer;
+mod log_filter;
 mod process;
 mod run_profile;
 mod runtime;
@@ -24,6 +25,7 @@ pub use debug_diagnostics::{
     DEFAULT_DEBUG_BYTES, DEFAULT_DEBUG_ENTRIES, DebugDiagnosticError, DebugDiagnostics, DebugEntry,
     DebugLevel, record_process_diagnostic, render_process_diagnostics,
 };
+pub use dexdeck_protocol::LogFilterSpec;
 pub use error::DexError;
 pub use job::{
     CancellationDirective, DEFAULT_JOB_OUTPUT_BYTES, JOB_HISTORY_LIMIT, Job, JobFinish, JobRequest,
@@ -33,6 +35,7 @@ pub use log_buffer::{
     ByteBoundedLogBuffer, DEFAULT_LOG_BUFFER_BYTES, LogBufferError, LogBufferStats,
     MAX_LOG_BUFFER_BYTES, MIN_LOG_BUFFER_BYTES, SequencedLogRecord,
 };
+pub use log_filter::{CompiledLogFilter, LogFilterIndex, LogFilterSnapshot};
 #[cfg(windows)]
 pub use process::run_windows_process_helper;
 pub use process::{

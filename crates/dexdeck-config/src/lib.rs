@@ -7,6 +7,7 @@ mod error;
 mod identity;
 mod job_history;
 mod loader;
+mod log_filters;
 mod model_cache;
 mod model_watch;
 mod parse;
@@ -19,11 +20,16 @@ pub use atomic::{
     write_text_atomic,
 };
 pub use config_error::{ConfigError, ConfigWarning};
+pub use dexdeck_protocol::SavedLogFilterPreset;
 pub use envelope::VersionedEnvelope;
 pub use error::StorageError;
 pub use identity::{PROJECT_NAMESPACE_VERSION, ProjectIdentity};
 pub use job_history::{PERSISTED_JOB_HISTORY_LIMIT, load_job_history, save_job_history};
 pub use loader::{ConfigLoader, ConfigSources, LoadedConfig};
+pub use log_filters::{
+    LogFilterPresetError, SAVED_LOG_FILTER_LIMIT, SAVED_LOG_FILTER_NAME_LIMIT, load_log_filters,
+    save_log_filters,
+};
 pub use model_cache::{
     ModelCacheBundle, ModelFingerprint, ModelInput, discover_model_inputs, fingerprint,
     fingerprint_for_model, load_fingerprint, load_model, load_model_bundle, save_fingerprint,
