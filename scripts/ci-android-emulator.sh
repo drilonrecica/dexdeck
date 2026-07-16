@@ -85,12 +85,21 @@ public final class MainActivity extends android.app.Activity {}
 JAVA
 cat > "$project/app/src/androidTest/java/dev/dexdeck/fixture/SmokeTest.java" <<'JAVA'
 package dev.dexdeck.fixture;
-public final class SmokeTest extends android.test.InstrumentationTestCase {
-  public void testDexDeckInstrumentation() { assertTrue(true); }
+import static org.junit.Assert.assertTrue;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+@RunWith(AndroidJUnit4.class)
+public final class SmokeTest {
+  @Test public void dexDeckInstrumentationPasses() { assertTrue(true); }
 }
 JAVA
 cat >> "$project/app/build.gradle.kts" <<'GRADLE'
-android { defaultConfig { applicationId = "dev.dexdeck.fixture"; minSdk = 23; targetSdk = 35; testInstrumentationRunner = "android.test.InstrumentationTestRunner" } }
+android { defaultConfig { applicationId = "dev.dexdeck.fixture"; minSdk = 23; targetSdk = 35; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" } }
+dependencies {
+  androidTestImplementation("androidx.test:runner:1.6.2")
+  androidTestImplementation("androidx.test.ext:junit:1.2.1")
+}
 GRADLE
 
 cargo build -p dexdeck
@@ -99,5 +108,7 @@ dexdeck_bin="$PWD/target/debug/dexdeck"
 "$dexdeck_bin" --project "$project" --module :app --variant debug build
 "$dexdeck_bin" --project "$project" --module :app --variant debug --device emulator-5554 install --yes
 "$dexdeck_bin" --project "$project" --module :app --variant debug --device emulator-5554 launch
-"$dexdeck_bin" --project "$project" --module :app --variant debug --device emulator-5554 test --kind instrumentation
+test_output=$("$dexdeck_bin" --project "$project" --module :app --variant debug --device emulator-5554 test --kind instrumentation)
+printf '%s\n' "$test_output"
+grep -Fq '1 passed, 0 failed' <<<"$test_output"
 "$dexdeck_bin" --project "$project" --module :app --variant debug --device emulator-5554 stop

@@ -3,10 +3,7 @@
 use std::{
     fs::File,
     io::{Read, Write},
-    os::{
-        fd::{AsRawFd, FromRawFd},
-        unix::process::CommandExt,
-    },
+    os::fd::FromRawFd,
     process::{Command, Stdio},
     thread,
     time::Duration,
@@ -34,23 +31,12 @@ fn verify(mode: Mode) -> Result<(), Box<dyn std::error::Error>> {
     let (master, slave) = open_pty()?;
     let before = tcgetattr(&slave)?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_dexdeck"));
-    let controlling_terminal = slave.try_clone()?;
     command
         .arg("--no-color")
         .arg("--ascii")
         .stdin(Stdio::from(slave.try_clone()?))
         .stdout(Stdio::from(slave.try_clone()?))
         .stderr(Stdio::from(slave.try_clone()?));
-    unsafe {
-        command.pre_exec(move || {
-            // login_tty performs the platform-specific session, controlling TTY,
-            // and standard-stream setup used by real terminal login processes.
-            if libc::login_tty(controlling_terminal.as_raw_fd()) == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
     match mode {
         Mode::Normal => {}
         Mode::InitializationFailure => {
