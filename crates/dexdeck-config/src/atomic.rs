@@ -28,7 +28,7 @@ pub fn write_json_atomic<T: Serialize>(
 ) -> Result<(), StorageError> {
     let path = path.as_ref();
     reject_symlink(path)?;
-    let parent = path.parent().ok_or_else(|| {
+    let parent = usable_parent(path).ok_or_else(|| {
         StorageError::io(
             path,
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent"),
@@ -65,18 +65,17 @@ pub fn write_json_atomic<T: Serialize>(
 
 pub fn write_text_atomic(path: impl AsRef<Path>, text: &str) -> Result<(), StorageError> {
     let path = path.as_ref();
-    reject_symlink(path)?;
-    let parent = path.parent().ok_or_else(|| {
+    reject_unsafe_components(path)?;
+    let parent = usable_parent(path).ok_or_else(|| {
         StorageError::io(
             path,
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent"),
         )
     })?;
-    ensure_private_directory(parent)?;
+    fs::create_dir_all(parent).map_err(|source| StorageError::io(parent, source))?;
 
     let mut temporary =
         NamedTempFile::new_in(parent).map_err(|source| StorageError::io(parent, source))?;
-    set_private_file_permissions(temporary.as_file(), temporary.path())?;
     temporary
         .write_all(text.as_bytes())
         .and_then(|()| temporary.flush())
@@ -152,22 +151,54 @@ pub fn load_json_recovering<T: DeserializeOwned>(
 }
 
 fn reject_symlink(path: &Path) -> Result<(), StorageError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(StorageError::UnsafePath {
-            path: path.to_path_buf(),
-        }),
-        Ok(_) => Ok(()),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(StorageError::io(path, source)),
+    reject_unsafe_components(path)
+}
+
+fn reject_unsafe_components(path: &Path) -> Result<(), StorageError> {
+    for component in path.ancestors() {
+        if component.as_os_str().is_empty() {
+            continue;
+        }
+        match fs::symlink_metadata(component) {
+            Ok(metadata) if is_link_or_reparse_point(&metadata) => {
+                return Err(StorageError::UnsafePath {
+                    path: component.to_path_buf(),
+                });
+            }
+            Ok(_) => {}
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(StorageError::io(component, source)),
+        }
     }
+    Ok(())
+}
+
+fn usable_parent(path: &Path) -> Option<&Path> {
+    path.parent().map(|parent| {
+        if parent.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            parent
+        }
+    })
+}
+
+#[cfg(not(windows))]
+fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
+#[cfg(windows)]
+fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    metadata.file_type().is_symlink()
+        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), StorageError> {
-    let existed = path.exists();
     fs::create_dir_all(path).map_err(|source| StorageError::io(path, source))?;
-    if !existed {
-        set_private_directory_permissions(path)?;
-    }
+    set_private_directory_permissions(path)?;
     Ok(())
 }
 
@@ -193,7 +224,12 @@ fn set_private_directory_permissions(path: &Path) -> Result<(), StorageError> {
         .map_err(|source| StorageError::io(path, source))
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn set_private_directory_permissions(path: &Path) -> Result<(), StorageError> {
+    restrict_windows_acl(path, true)
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn set_private_directory_permissions(_path: &Path) -> Result<(), StorageError> {
     Ok(())
 }
@@ -206,8 +242,44 @@ fn set_private_file_permissions(file: &File, path: &Path) -> Result<(), StorageE
         .map_err(|source| StorageError::io(path, source))
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn set_private_file_permissions(_file: &File, path: &Path) -> Result<(), StorageError> {
+    restrict_windows_acl(path, false)
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn set_private_file_permissions(_file: &File, _path: &Path) -> Result<(), StorageError> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn restrict_windows_acl(path: &Path, directory: bool) -> Result<(), StorageError> {
+    let user = std::env::var_os("USERNAME").ok_or_else(|| {
+        StorageError::io(
+            path,
+            std::io::Error::other("USERNAME is unavailable for ACL setup"),
+        )
+    })?;
+    let mut grant = user;
+    grant.push(if directory { ":(OI)(CI)F" } else { ":F" });
+    let status = std::process::Command::new("icacls.exe")
+        .arg(path)
+        .args(["/inheritance:r", "/grant:r"])
+        .arg(grant)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|source| StorageError::io(path, source))?;
+    if !status.success() {
+        return Err(StorageError::io(
+            path,
+            std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "icacls rejected private ACL",
+            ),
+        ));
+    }
     Ok(())
 }
 
@@ -321,6 +393,33 @@ mod tests {
 
         assert!(matches!(
             load_json::<State>(&link, 1),
+            Err(StorageError::UnsafePath { .. })
+        ));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symbolic_links_in_parent_components() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir()?;
+        let target = directory.path().join("target");
+        fs::create_dir(&target)?;
+        let link = directory.path().join("link");
+        symlink(&target, &link)?;
+        let path = link.join("state.json");
+
+        assert!(matches!(
+            write_json_atomic(
+                &path,
+                &VersionedEnvelope::new(
+                    1,
+                    State {
+                        selection: "unsafe".into()
+                    }
+                )
+            ),
             Err(StorageError::UnsafePath { .. })
         ));
         Ok(())

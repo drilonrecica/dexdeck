@@ -107,6 +107,31 @@ impl ConfigLayer {
         }
         Ok(())
     }
+
+    /// Every referenced variable is secret material, regardless of its name.
+    #[must_use]
+    pub fn environment_references(&self) -> Vec<&str> {
+        self.profiles
+            .values()
+            .flat_map(|profile| {
+                profile
+                    .environment
+                    .values()
+                    .chain(profile.gradle_properties.values())
+            })
+            .chain(
+                self.commands
+                    .values()
+                    .flat_map(|command| command.environment.values()),
+            )
+            .filter_map(|value| match value {
+                EnvironmentValue::FromEnvironment { from_env } => Some(from_env.as_str()),
+                EnvironmentValue::Literal(_)
+                | EnvironmentValue::Integer(_)
+                | EnvironmentValue::Boolean(_) => None,
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

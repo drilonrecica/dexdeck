@@ -5,6 +5,8 @@ mod config_error;
 mod envelope;
 mod error;
 mod identity;
+mod job_history;
+mod loader;
 mod model_cache;
 mod model_watch;
 mod parse;
@@ -20,8 +22,12 @@ pub use config_error::{ConfigError, ConfigWarning};
 pub use envelope::VersionedEnvelope;
 pub use error::StorageError;
 pub use identity::{PROJECT_NAMESPACE_VERSION, ProjectIdentity};
+pub use job_history::{PERSISTED_JOB_HISTORY_LIMIT, load_job_history, save_job_history};
+pub use loader::{ConfigLoader, ConfigSources, LoadedConfig};
 pub use model_cache::{
-    ModelFingerprint, ModelInput, discover_model_inputs, fingerprint, load_model, save_model,
+    ModelCacheBundle, ModelFingerprint, ModelInput, discover_model_inputs, fingerprint,
+    fingerprint_for_model, load_fingerprint, load_model, load_model_bundle, save_fingerprint,
+    save_model, save_model_bundle,
 };
 pub use model_watch::{
     DEFAULT_MODEL_DEBOUNCE, ModelInputWatcher, ModelWatchError, ModelWatchState, SessionSelection,

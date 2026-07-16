@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver},
     time::{Duration, Instant},
@@ -100,15 +101,18 @@ impl ModelInputWatcher {
         let mut watcher = notify::recommended_watcher(move |event| {
             let _ = sender.send(event);
         })?;
-        for path in paths {
-            watcher.watch(
-                path,
+        let targets = paths
+            .iter()
+            .filter_map(|path| {
                 if path.is_dir() {
-                    RecursiveMode::Recursive
+                    Some(path.clone())
                 } else {
-                    RecursiveMode::NonRecursive
-                },
-            )?;
+                    path.parent().map(Path::to_path_buf)
+                }
+            })
+            .collect::<BTreeSet<_>>();
+        for path in targets {
+            watcher.watch(&path, RecursiveMode::NonRecursive)?;
         }
         Ok(Self {
             _watcher: watcher,
@@ -130,6 +134,13 @@ impl ModelInputWatcher {
 pub fn is_model_input(root: &Path, path: &Path) -> bool {
     path.strip_prefix(root).is_ok_and(|relative| {
         let text = relative.to_string_lossy();
+        let file_name = relative.file_name().and_then(|name| name.to_str());
+        let in_ignored_tree = relative.components().any(|component| {
+            matches!(
+                component.as_os_str().to_str(),
+                Some(".git" | ".gradle" | "build" | "out" | "target")
+            )
+        });
         matches!(
             text.as_ref(),
             "settings.gradle"
@@ -142,6 +153,16 @@ pub fn is_model_input(root: &Path, path: &Path) -> bool {
                 | ".dexdeck/config.toml"
         ) || text.starts_with("buildSrc/")
             || text.starts_with("build-logic/")
+            || !in_ignored_tree
+                && matches!(
+                    file_name,
+                    Some(
+                        "build.gradle"
+                            | "build.gradle.kts"
+                            | "settings.gradle"
+                            | "settings.gradle.kts"
+                    )
+                )
     })
 }
 

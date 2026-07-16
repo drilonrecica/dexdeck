@@ -33,6 +33,14 @@ pub enum ConfigError {
         field: String,
         message: String,
     },
+    #[error("{path}:{line}:{column}: invalid configuration field {field}: {message}")]
+    ValidationAt {
+        path: PathBuf,
+        field: String,
+        line: usize,
+        column: usize,
+        message: String,
+    },
     #[error("shared configuration migration requires explicit confirmation: {path}")]
     SharedMigrationConfirmationRequired { path: PathBuf },
     #[error(transparent)]

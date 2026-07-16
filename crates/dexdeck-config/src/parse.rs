@@ -51,7 +51,9 @@ pub fn parse_config(path: impl AsRef<Path>, input: &str) -> Result<ParsedConfig,
         .map_err(|error| parse_error(path, input, error.message(), error.span()))?;
     let config = toml_edit::de::from_document::<ConfigFile>(document.clone())
         .map_err(|error| parse_error(path, input, error.message(), error.span()))?;
-    config.validate(path.to_path_buf())?;
+    if let Err(error) = config.validate(path.to_path_buf()) {
+        return Err(attach_validation_span(error, input, &document));
+    }
     let mut warnings = collect_warnings(input, &document);
     if config
         .logcat
@@ -85,6 +87,40 @@ pub fn parse_config(path: impl AsRef<Path>, input: &str) -> Result<ParsedConfig,
     })
 }
 
+fn attach_validation_span(error: ConfigError, input: &str, document: &DocumentMut) -> ConfigError {
+    let ConfigError::Validation {
+        path,
+        field,
+        message,
+    } = error
+    else {
+        return error;
+    };
+    let mut item = None;
+    let mut table: &dyn TableLike = document.as_table();
+    for (index, component) in field.split('.').enumerate() {
+        let found = table.get(component);
+        item = found;
+        if index + 1 < field.split('.').count() {
+            let Some(next) = found.and_then(Item::as_table_like) else {
+                break;
+            };
+            table = next;
+        }
+    }
+    let (line, column) = line_column(
+        input,
+        item.and_then(Item::span).map_or(0, |span| span.start),
+    );
+    ConfigError::ValidationAt {
+        path,
+        field,
+        line,
+        column,
+        message,
+    }
+}
+
 pub fn write_config_document(
     path: impl AsRef<Path>,
     document: &ConfigDocument,
@@ -105,7 +141,7 @@ pub fn write_config_migration(
         });
     }
 
-    let backup = if scope == ConfigScope::Local && path.exists() {
+    let backup = if path.exists() {
         let backup = path.with_extension("toml.bak");
         let source = fs::read_to_string(path)
             .map_err(|error| ConfigError::Storage(StorageError::io(path, error)))?;
@@ -374,7 +410,7 @@ working_directory = "."
         let secret = "schema_version = 1\n[profiles.bad.environment]\nAPI_TOKEN = \"secret\"\n";
         assert!(matches!(
             parse_config("config.toml", secret),
-            Err(ConfigError::Validation { .. })
+            Err(ConfigError::ValidationAt { .. })
         ));
     }
 
@@ -451,7 +487,7 @@ working_directory = "."
         let buffer = "schema_version = 1\n[logcat]\nbuffer_mib = 7\n";
         assert!(matches!(
             parse_config("config.toml", buffer),
-            Err(ConfigError::Validation { .. })
+            Err(ConfigError::ValidationAt { .. })
         ));
 
         let mut environment = BTreeMap::new();
