@@ -68,6 +68,8 @@ pub fn save_session(path: &Path, session: &SessionState) -> Result<(), StorageEr
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     #[test]
@@ -82,5 +84,22 @@ mod tests {
         assert_eq!(session.module, None);
         assert_eq!(session.variant, None);
         assert_eq!(session.device, None);
+    }
+
+    #[test]
+    fn corrupt_session_is_quarantined_without_blocking_startup()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("session.json");
+        fs::write(&path, "{not-json")?;
+        assert!(matches!(
+            load_session(&path)?,
+            RecoveredFile::Corrupt {
+                quarantined_path: Some(_),
+                ..
+            }
+        ));
+        assert!(!path.exists());
+        Ok(())
     }
 }

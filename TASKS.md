@@ -469,7 +469,7 @@ compact terminals work; exit restores state without stopping external tools.
   platform smoke tests, and package installation.
 - Commit: "ci: complete DexDeck validation matrix"
 
-### F7.2 Cover critical failure modes — P0/Critical
+### F7.2 Cover critical failure modes — P0/Critical ✅
 
 - Test corrupt caches, permissions, interruption, watcher overflow, disconnect,
   cancellation, terminal panic restoration, active-job exit, Windows behavior,

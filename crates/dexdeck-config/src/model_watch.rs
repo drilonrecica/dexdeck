@@ -1,7 +1,11 @@
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver},
+    },
     time::{Duration, Instant},
 };
 
@@ -10,6 +14,7 @@ use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use thiserror::Error;
 
 pub const DEFAULT_MODEL_DEBOUNCE: Duration = Duration::from_millis(350);
+pub const MODEL_WATCH_EVENT_CAPACITY: usize = 256;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SessionSelection {
@@ -93,13 +98,18 @@ pub enum ModelWatchError {
 pub struct ModelInputWatcher {
     _watcher: RecommendedWatcher,
     receiver: Receiver<notify::Result<Event>>,
+    overflowed: Arc<AtomicBool>,
 }
 
 impl ModelInputWatcher {
     pub fn start(paths: &[PathBuf]) -> Result<Self, ModelWatchError> {
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::sync_channel(MODEL_WATCH_EVENT_CAPACITY);
+        let overflowed = Arc::new(AtomicBool::new(false));
+        let callback_overflowed = Arc::clone(&overflowed);
         let mut watcher = notify::recommended_watcher(move |event| {
-            let _ = sender.send(event);
+            if sender.try_send(event).is_err() {
+                callback_overflowed.store(true, Ordering::Release);
+            }
         })?;
         let targets = paths
             .iter()
@@ -117,11 +127,12 @@ impl ModelInputWatcher {
         Ok(Self {
             _watcher: watcher,
             receiver,
+            overflowed,
         })
     }
 
     pub fn drain_changed(&self) -> Result<bool, ModelWatchError> {
-        let mut changed = false;
+        let mut changed = self.overflowed.swap(false, Ordering::AcqRel);
         while let Ok(event) = self.receiver.try_recv() {
             event?;
             changed = true;

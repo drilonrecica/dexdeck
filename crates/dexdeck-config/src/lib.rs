@@ -37,8 +37,8 @@ pub use model_cache::{
     save_model, save_model_bundle,
 };
 pub use model_watch::{
-    DEFAULT_MODEL_DEBOUNCE, ModelInputWatcher, ModelWatchError, ModelWatchState, SessionSelection,
-    WatchDecision, is_model_input,
+    DEFAULT_MODEL_DEBOUNCE, MODEL_WATCH_EVENT_CAPACITY, ModelInputWatcher, ModelWatchError,
+    ModelWatchState, SessionSelection, WatchDecision, is_model_input,
 };
 pub use parse::{
     ConfigDocument, ConfigScope, ParsedConfig, parse_config, write_config_document,
