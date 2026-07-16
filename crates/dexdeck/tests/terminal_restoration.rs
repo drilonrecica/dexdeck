@@ -100,8 +100,8 @@ fn open_pty() -> std::io::Result<(File, File)> {
             &mut master,
             &mut slave,
             std::ptr::null_mut(),
-            std::ptr::null(),
-            std::ptr::null(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
         )
     };
     if result == -1 {
