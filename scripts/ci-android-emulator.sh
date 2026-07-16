@@ -2,7 +2,9 @@
 set -euo pipefail
 
 : "${ANDROID_HOME:=${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
-export ANDROID_HOME ANDROID_SDK_ROOT="$ANDROID_HOME"
+: "${ANDROID_AVD_HOME:=${RUNNER_TEMP:-$HOME/.android}/dexdeck-avd}"
+export ANDROID_HOME ANDROID_SDK_ROOT="$ANDROID_HOME" ANDROID_AVD_HOME
+mkdir -p "$ANDROID_AVD_HOME"
 
 find_sdk_tool() {
   local name=$1
@@ -28,10 +30,25 @@ avdmanager=$(find_sdk_tool avdmanager \
   "$ANDROID_HOME/cmdline-tools/bin/avdmanager")
 
 image="system-images;android-35;google_apis;x86_64"
-"$sdkmanager" --install "platform-tools" "emulator" "$image"
+"$sdkmanager" --install \
+  "platform-tools" \
+  "emulator" \
+  "platforms;android-36" \
+  "build-tools;36.0.0" \
+  "$image"
 adb=$(find_sdk_tool adb "$ANDROID_HOME/platform-tools/adb")
 emulator=$(find_sdk_tool emulator "$ANDROID_HOME/emulator/emulator")
-printf 'no\n' | "$avdmanager" create avd --force --name dexdeck-ci --package "$image"
+printf 'no\n' | "$avdmanager" create avd --force --name dexdeck-ci \
+  --package "$image" --path "$ANDROID_AVD_HOME/dexdeck-ci.avd"
+if ! "$emulator" -list-avds | grep -Fxq dexdeck-ci; then
+  printf 'Android emulator did not register the dexdeck-ci AVD in %s\n' \
+    "$ANDROID_AVD_HOME" >&2
+  find "$ANDROID_AVD_HOME" -maxdepth 2 -type f -print >&2
+  exit 1
+fi
+if [[ -e /dev/kvm && (! -r /dev/kvm || ! -w /dev/kvm) ]]; then
+  sudo chmod 666 /dev/kvm
+fi
 "$emulator" -avd dexdeck-ci -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect &
 emulator_pid=$!
 trap 'kill "$emulator_pid" 2>/dev/null || true; "$adb" kill-server 2>/dev/null || true' EXIT
