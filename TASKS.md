@@ -217,7 +217,7 @@ tree cancellation works; CLI emits valid schema-v1 output.
   refresh during Gradle work, and valid session selection restoration.
 - Commit: "feat(config): watch project model inputs"
 
-### F2.10 Add explicit degraded mode — P0/High
+### F2.10 Add explicit degraded mode — P0/High ✅
 
 - Handle AGP outside 8–9, bridge incompatibility, unavailable APIs, missing
   wrappers, and configuration failures without claiming full support.
