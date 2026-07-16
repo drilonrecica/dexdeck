@@ -15,6 +15,9 @@ sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+dexdeck-config = { version = "0.2.0", path = "../dexdeck-config" }
+dexdeck-test-support = { version = "0.2.0", path = "../dexdeck-test-support" }
+serde_json.workspace = true
 tempfile.workspace = true
 
 [lints]

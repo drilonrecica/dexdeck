@@ -230,7 +230,7 @@ tree cancellation works; CLI emits valid schema-v1 output.
   human/JSON output, freshness, and degraded status.
 - Commit: "feat(cli): expose project model commands"
 
-### F2.12 Verify the modeling matrix — P0/Critical
+### F2.12 Verify the modeling matrix — P0/Critical ✅
 
 - Test all fixtures, protocol compatibility, corrupt/partial output, cache
   invalidation, bridge cancellation, and unchanged project Git status.

@@ -312,7 +312,10 @@ dependencies = [
 name = "dexdeck-gradle"
 version = "0.2.0"
 dependencies = [
+ "dexdeck-config",
  "dexdeck-protocol",
+ "dexdeck-test-support",
+ "serde_json",
  "sha2",
  "tempfile",
  "thiserror",
