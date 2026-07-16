@@ -316,7 +316,7 @@ stop; normal workflows preserve data; cancellation leaves no process behind.
 - Fuzz partial, malformed, invalid UTF-8, oversized, and restart inputs.
 - Commit: "feat(logcat): parse structured log streams"
 
-### F4.2 Add bounded log storage — P0/Critical
+### F4.2 Add bounded log storage — P0/Critical ✅
 
 - Enforce 8 MiB minimum, 32 MiB default, 1 GiB maximum, and warning above
   256 MiB; evict complete oldest entries and track drops.

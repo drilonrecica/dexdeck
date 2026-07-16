@@ -6,6 +6,7 @@ mod custom_command;
 mod debug_diagnostics;
 mod error;
 mod job;
+mod log_buffer;
 mod process;
 mod run_profile;
 mod runtime;
@@ -27,6 +28,10 @@ pub use error::DexError;
 pub use job::{
     CancellationDirective, DEFAULT_JOB_OUTPUT_BYTES, JOB_HISTORY_LIMIT, Job, JobFinish, JobRequest,
     JobSchedule, JobScheduler, JobSchedulerError, OutputBuffer,
+};
+pub use log_buffer::{
+    ByteBoundedLogBuffer, DEFAULT_LOG_BUFFER_BYTES, LogBufferError, LogBufferStats,
+    MAX_LOG_BUFFER_BYTES, MIN_LOG_BUFFER_BYTES, SequencedLogRecord,
 };
 #[cfg(windows)]
 pub use process::run_windows_process_helper;
