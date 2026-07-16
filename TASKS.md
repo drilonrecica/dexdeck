@@ -483,7 +483,7 @@ compact terminals work; exit restores state without stopping external tools.
   fixtures/hardware/tool metadata.
 - Commit: "perf: add reproducible DexDeck benchmarks"
 
-### F7.4 Enforce local-only runtime behavior — P0/Critical
+### F7.4 Enforce local-only runtime behavior — P0/Critical ✅
 
 - Audit telemetry, HTTP, updates, uploads, persistence, secrets, shells, trust,
   dependency trees, file permissions, and runtime socket syscalls.

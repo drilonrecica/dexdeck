@@ -162,6 +162,20 @@ jobs:
       - name: Verify normal tests leave the project unchanged
         run: test -z "$(git status --porcelain=v1 --untracked-files=no)"
 
+  privacy:
+    name: Local-only runtime contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.0 --profile minimal
+      - name: Audit dependencies, source, and runtime syscalls
+        run: bash scripts/audit-local-only.sh
+
   bridge-reproducibility:
     name: Bridge reproducibility
     runs-on: ubuntu-latest
