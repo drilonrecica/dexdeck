@@ -6,6 +6,7 @@ mod envelope;
 mod error;
 mod identity;
 mod model_cache;
+mod model_watch;
 mod parse;
 mod paths;
 mod resolve;
@@ -21,6 +22,10 @@ pub use error::StorageError;
 pub use identity::{PROJECT_NAMESPACE_VERSION, ProjectIdentity};
 pub use model_cache::{
     ModelFingerprint, ModelInput, discover_model_inputs, fingerprint, load_model, save_model,
+};
+pub use model_watch::{
+    DEFAULT_MODEL_DEBOUNCE, ModelInputWatcher, ModelWatchError, ModelWatchState, SessionSelection,
+    WatchDecision, is_model_input,
 };
 pub use parse::{
     ConfigDocument, ConfigScope, ParsedConfig, parse_config, write_config_document,
