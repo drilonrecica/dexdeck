@@ -61,6 +61,10 @@ pub fn run(options: ShellOptions) -> Result<(), ShellError> {
         },
     );
     let mut session = TerminalSession::enter()?;
+    #[cfg(debug_assertions)]
+    if std::env::var_os("DEXDECK_INTERNAL_TEST_PANIC_AFTER_ENTER").is_some() {
+        panic!("injected terminal restoration test panic");
+    }
     run_loop(session.terminal_mut(), theme)
 }
 
@@ -225,6 +229,13 @@ struct TerminalSession {
 impl TerminalSession {
     fn enter() -> Result<Self, ShellError> {
         enable_raw_mode()?;
+        #[cfg(debug_assertions)]
+        if std::env::var_os("DEXDECK_INTERNAL_TEST_FAIL_AFTER_RAW").is_some() {
+            disable_raw_mode()?;
+            return Err(ShellError::Io(io::Error::other(
+                "injected terminal initialization failure",
+            )));
+        }
         let mut stdout = io::stdout();
         if let Err(error) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Hide) {
             let _ = disable_raw_mode();
