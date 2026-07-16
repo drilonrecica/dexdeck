@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use rustix::termios::tcgetattr;
+use rustix::termios::{LocalModes, tcgetattr};
 
 #[derive(Clone, Copy)]
 enum Mode {
@@ -66,7 +66,13 @@ fn verify(mode: Mode) -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(after.input_modes, before.input_modes);
     assert_eq!(after.output_modes, before.output_modes);
     assert_eq!(after.control_modes, before.control_modes);
-    assert_eq!(after.local_modes, before.local_modes);
+    // PENDIN is transient kernel state indicating queued input needs reprinting;
+    // macOS may set it after the synthetic `q`. It is not a terminal mode that
+    // raw-mode entry or restoration controls.
+    assert_eq!(
+        after.local_modes - LocalModes::PENDIN,
+        before.local_modes - LocalModes::PENDIN
+    );
     assert_eq!(after.input_speed(), before.input_speed());
     assert_eq!(after.output_speed(), before.output_speed());
     match mode {

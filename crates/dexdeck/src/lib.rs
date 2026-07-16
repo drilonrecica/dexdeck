@@ -993,7 +993,19 @@ fn execute_tests(
         }
     }
     let result = if instrumentation {
-        TestReportParser::parse_instrumentation(&raw_output, base_selection).result
+        let connected_reports = profile
+            .module
+            .project_directory
+            .join("build/outputs/androidTest-results/connected");
+        let parsed = TestReportParser::parse_junit_paths(
+            std::slice::from_ref(&connected_reports),
+            base_selection.clone(),
+        );
+        if parsed.result.cases.is_empty() {
+            TestReportParser::parse_instrumentation(&raw_output, base_selection).result
+        } else {
+            parsed.result
+        }
     } else {
         TestReportParser::parse_junit_paths(std::slice::from_ref(&report_root), base_selection)
             .result

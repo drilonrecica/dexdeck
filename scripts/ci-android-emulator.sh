@@ -49,7 +49,8 @@ fi
 if [[ -e /dev/kvm && (! -r /dev/kvm || ! -w /dev/kvm) ]]; then
   sudo chmod 666 /dev/kvm
 fi
-"$emulator" -avd dexdeck-ci -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect &
+"$emulator" -avd dexdeck-ci -no-window -no-audio -no-boot-anim -no-snapshot-save \
+  -gpu swiftshader_indirect &
 emulator_pid=$!
 trap 'kill "$emulator_pid" 2>/dev/null || true; "$adb" kill-server 2>/dev/null || true' EXIT
 
@@ -108,7 +109,15 @@ dexdeck_bin="$PWD/target/debug/dexdeck"
 "$dexdeck_bin" --project "$project" --module :app --variant debug build
 "$dexdeck_bin" --project "$project" --module :app --variant debug --device emulator-5554 install --yes
 "$dexdeck_bin" --project "$project" --module :app --variant debug --device emulator-5554 launch
-test_output=$("$dexdeck_bin" --project "$project" --module :app --variant debug --device emulator-5554 test --kind instrumentation)
+test_log="$RUNNER_TEMP/dexdeck-instrumentation.log"
+if ! "$dexdeck_bin" --project "$project" --module :app --variant debug --device emulator-5554 \
+  test --kind instrumentation >"$test_log" 2>&1; then
+  cat "$test_log"
+  ANDROID_SERIAL=emulator-5554 "$project/gradlew" \
+    --project-dir "$project" :app:connectedDebugAndroidTest --console=plain --stacktrace || true
+  exit 1
+fi
+test_output=$(<"$test_log")
 printf '%s\n' "$test_output"
 grep -Fq '1 passed, 0 failed' <<<"$test_output"
 "$dexdeck_bin" --project "$project" --module :app --variant debug --device emulator-5554 stop
