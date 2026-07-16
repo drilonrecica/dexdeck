@@ -15,6 +15,8 @@ dexdeck-core = { version = "0.2.0", path = "../dexdeck-core" }
 dexdeck-config = { version = "0.2.0", path = "../dexdeck-config" }
 sha2.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+quick-xml.workspace = true
 thiserror.workspace = true
 tokio-util.workspace = true
 tokio.workspace = true

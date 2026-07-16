@@ -371,7 +371,7 @@ all processes; memory is bounded; no automatic disk writes occur.
 - Require an active device for instrumentation and retain arbitrary test tasks.
 - Commit: "feat(test): invoke Android test targets"
 
-### F5.2 Parse structured test results — P0/High
+### F5.2 Parse structured test results — P0/High ✅
 
 - Parse JUnit and instrumentation reports into counts, duration, failure, stack,
   and source data; tolerate missing/malformed/partial reports.
