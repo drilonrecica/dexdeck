@@ -310,6 +310,7 @@ dependencies = [
 name = "dexdeck-gradle"
 version = "0.2.0"
 dependencies = [
+ "dexdeck-protocol",
  "tempfile",
  "thiserror",
 ]

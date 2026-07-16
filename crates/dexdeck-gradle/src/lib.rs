@@ -1,8 +1,10 @@
 //! Gradle discovery and bridge integration.
 
+mod agp8;
 mod bridge;
 mod discovery;
 
+pub use agp8::Agp8ModelBuilder;
 pub use bridge::{
     AdapterKind, BRIDGE_JAVA_VERSION, BridgeError, BridgeInvocation, MODEL_TASK, OUTPUT_PROPERTY,
     select_adapter,
