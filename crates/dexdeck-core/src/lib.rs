@@ -13,6 +13,7 @@ mod process;
 mod run_profile;
 mod runtime;
 mod secret;
+mod test_history;
 mod workflow;
 
 pub use app::{
@@ -57,6 +58,9 @@ pub use runtime::{
 pub use secret::{
     REDACTED, SecretError, SecretRedactor, SensitiveValue, StreamingSecretRedactor,
     resolve_environment_references,
+};
+pub use test_history::{
+    RecordedTestRun, TestRerunError, TestRerunKind, TestRerunPlan, TestRunHistory,
 };
 pub use workflow::{
     Workflow, WorkflowError, WorkflowEvent, WorkflowExecutor, WorkflowRequest, WorkflowStep,

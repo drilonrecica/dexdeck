@@ -377,7 +377,7 @@ all processes; memory is bounded; no automatic disk writes occur.
   and source data; tolerate missing/malformed/partial reports.
 - Commit: "feat(test): parse structured test results"
 
-### F5.3 Rerun failed selections — P1/High
+### F5.3 Rerun failed selections — P1/High ✅
 
 - Add rerun all, failed, and selected class/method with job history.
 - Refuse ambiguous reconstruction with a precise explanation.
