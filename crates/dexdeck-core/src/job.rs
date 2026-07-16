@@ -1,6 +1,12 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    path::Path,
+};
 
+use dexdeck_config::{RecoveredFile, StorageError, load_job_history, save_job_history};
 use dexdeck_protocol::{Diagnostic, JobId, JobRecord, JobState};
+
+use crate::SecretRedactor;
 
 pub const JOB_HISTORY_LIMIT: usize = 50;
 pub const DEFAULT_JOB_OUTPUT_BYTES: usize = 1024 * 1024;
@@ -210,6 +216,7 @@ impl JobScheduler {
                 let job = self.job_mut(id)?;
                 job.record.state = JobState::Cancelled;
                 self.record_history(id)?;
+                self.jobs.remove(id);
                 Ok(CancellationDirective::None)
             }
             JobState::Starting | JobState::Running => {
@@ -249,6 +256,7 @@ impl JobScheduler {
             job.mutating_gradle_root.clone()
         };
         self.record_history(id)?;
+        self.jobs.remove(id);
 
         let mut promoted = Vec::new();
         if let Some(root) = root {
@@ -272,6 +280,63 @@ impl JobScheduler {
     #[must_use]
     pub fn history(&self) -> &VecDeque<JobRecord> {
         &self.history
+    }
+
+    pub fn restore_history(&mut self, records: impl IntoIterator<Item = JobRecord>) {
+        self.history.clear();
+        for record in records
+            .into_iter()
+            .filter(|record| is_terminal(record.state))
+        {
+            if self.history.len() == JOB_HISTORY_LIMIT {
+                self.history.pop_front();
+            }
+            self.history.push_back(record);
+        }
+    }
+
+    pub fn persist_history(
+        &self,
+        path: &Path,
+        redactor: &SecretRedactor,
+    ) -> Result<(), StorageError> {
+        let records = self
+            .history
+            .iter()
+            .cloned()
+            .map(|mut record| {
+                record.command_summary = redactor.redact_argv(&record.command_summary);
+                record.started_at = redactor.redact_text(&record.started_at);
+                record.finished_at = record.finished_at.map(|value| redactor.redact_text(&value));
+                record.module = record.module.map(|value| redactor.redact_text(&value));
+                record.variant = record.variant.map(|value| redactor.redact_text(&value));
+                record.device = record.device.map(|value| redactor.redact_text(&value));
+                for diagnostic in &mut record.diagnostics {
+                    diagnostic.message = redactor.redact_text(&diagnostic.message);
+                    diagnostic.raw_context = diagnostic
+                        .raw_context
+                        .take()
+                        .map(|value| redactor.redact_text(&value));
+                    diagnostic.suggested_action = diagnostic
+                        .suggested_action
+                        .take()
+                        .map(|value| redactor.redact_text(&value));
+                }
+                record
+            })
+            .collect::<Vec<_>>();
+        save_job_history(path, &records)
+    }
+
+    pub fn restore_persisted_history(
+        &mut self,
+        path: &Path,
+    ) -> Result<RecoveredFile<Vec<JobRecord>>, StorageError> {
+        let recovered = load_job_history(path)?;
+        if let RecoveredFile::Loaded(records) = &recovered {
+            self.restore_history(records.clone());
+        }
+        Ok(recovered)
     }
 
     fn job_mut(&mut self, id: &JobId) -> Result<&mut Job, JobSchedulerError> {
@@ -355,6 +420,7 @@ mod tests {
     use dexdeck_protocol::JobKind;
 
     use super::*;
+    use crate::SensitiveValue;
 
     fn request(id: usize, root: Option<&str>) -> JobRequest {
         JobRequest {
@@ -437,7 +503,10 @@ mod tests {
         assert_eq!(scheduler.cancel(&running)?, CancellationDirective::Graceful);
         assert_eq!(scheduler.cancel(&running)?, CancellationDirective::Force);
         assert_eq!(scheduler.cancel(&queued)?, CancellationDirective::None);
-        assert_eq!(scheduler.job(&queued)?.record.state, JobState::Cancelled);
+        assert!(matches!(
+            scheduler.job(&queued),
+            Err(JobSchedulerError::UnknownJob(_))
+        ));
         Ok(())
     }
 
@@ -459,6 +528,29 @@ mod tests {
             scheduler.history().back().map(|record| &record.id),
             Some(&JobId("job-54".into()))
         );
+        assert!(scheduler.jobs.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_history_is_redacted_and_restorable() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("jobs.json");
+        let mut scheduler = JobScheduler::default();
+        let mut job = request(1, None);
+        job.record.command_summary.push("boundary-secret".into());
+        scheduler.submit(job)?;
+        scheduler.finish(&JobId("job-1".into()), finish(JobState::Succeeded))?;
+        let mut redactor = SecretRedactor::new();
+        redactor.register(&SensitiveValue::new("boundary-secret"));
+        scheduler.persist_history(&path, &redactor)?;
+        assert!(!std::fs::read_to_string(&path)?.contains("boundary-secret"));
+        let mut restored = JobScheduler::default();
+        assert!(matches!(
+            restored.restore_persisted_history(&path)?,
+            RecoveredFile::Loaded(_)
+        ));
+        assert_eq!(restored.history().len(), 1);
         Ok(())
     }
 }

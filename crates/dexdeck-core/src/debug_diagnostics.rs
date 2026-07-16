@@ -1,9 +1,36 @@
-use std::{collections::VecDeque, fmt::Write};
+use std::{
+    collections::VecDeque,
+    fmt::Write,
+    sync::{Mutex, OnceLock},
+};
 
 use crate::SecretRedactor;
 
 pub const DEFAULT_DEBUG_BYTES: usize = 256 * 1024;
 pub const DEFAULT_DEBUG_ENTRIES: usize = 1_000;
+
+static PROCESS_DIAGNOSTICS: OnceLock<Mutex<DebugDiagnostics>> = OnceLock::new();
+
+pub fn record_process_diagnostic(
+    timestamp_ms: u64,
+    level: DebugLevel,
+    component: impl Into<String>,
+    message: &str,
+    redactor: &SecretRedactor,
+) {
+    let diagnostics = PROCESS_DIAGNOSTICS.get_or_init(|| Mutex::new(DebugDiagnostics::default()));
+    if let Ok(mut diagnostics) = diagnostics.lock() {
+        diagnostics.push(timestamp_ms, level, component, message, redactor);
+    }
+}
+
+#[must_use]
+pub fn render_process_diagnostics() -> String {
+    PROCESS_DIAGNOSTICS
+        .get()
+        .and_then(|diagnostics| diagnostics.lock().ok().map(|value| value.render_text()))
+        .unwrap_or_default()
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DebugLevel {

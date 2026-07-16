@@ -273,6 +273,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -298,10 +300,12 @@ dependencies = [
 name = "dexdeck-core"
 version = "0.2.0"
 dependencies = [
+ "dexdeck-config",
  "dexdeck-protocol",
  "proptest",
  "rustix 1.1.4",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -313,12 +317,15 @@ name = "dexdeck-gradle"
 version = "0.2.0"
 dependencies = [
  "dexdeck-config",
+ "dexdeck-core",
  "dexdeck-protocol",
  "dexdeck-test-support",
  "serde_json",
  "sha2",
  "tempfile",
  "thiserror",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

@@ -310,9 +310,18 @@ mod platform {
         }
 
         pub fn force(&self) -> Result<(), ProcessError> {
-            kill_process_group(self.process_group, Signal::KILL).map_err(|error| {
-                ProcessError::Io(std::io::Error::from_raw_os_error(error.raw_os_error()))
-            })
+            match kill_process_group(self.process_group, Signal::KILL) {
+                Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+                Err(error) => Err(ProcessError::Io(std::io::Error::from_raw_os_error(
+                    error.raw_os_error(),
+                ))),
+            }
+        }
+    }
+
+    impl Drop for ProcessTree {
+        fn drop(&mut self) {
+            let _ = self.force();
         }
     }
 }
@@ -469,6 +478,28 @@ mod tests {
 
         let result = task.await??;
         assert_eq!(result.termination, TerminationReason::ForcedCancellation);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dropping_run_future_kills_the_process_group() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let directory = tempfile::tempdir()?;
+        let marker = directory.path().join("survived");
+        let script = format!("sleep 1; touch {}", marker.display());
+        let spec = CommandSpec::new("/bin/sh", directory.path())?.args(["-c", &script]);
+        let supervisor = ProcessSupervisor::new(64, Duration::from_millis(50))?;
+        let task = tokio::spawn(async move {
+            supervisor
+                .run(&spec, CancellationToken::new(), CancellationToken::new())
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        task.abort();
+        let _ = task.await;
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        assert!(!marker.exists());
         Ok(())
     }
 }

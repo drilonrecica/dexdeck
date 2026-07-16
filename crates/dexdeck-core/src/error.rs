@@ -1,6 +1,6 @@
 use std::fmt;
 
-use dexdeck_protocol::{ErrorCategory, OperationContext, OperationError};
+use dexdeck_protocol::{ErrorCategory, ErrorCode, OperationContext, OperationError};
 
 use crate::SecretRedactor;
 
@@ -12,7 +12,7 @@ pub struct DexError {
 impl DexError {
     #[must_use]
     pub fn new(
-        code: impl Into<String>,
+        code: ErrorCode,
         category: ErrorCategory,
         message: impl AsRef<str>,
         context: OperationContext,
@@ -21,7 +21,7 @@ impl DexError {
     ) -> Self {
         Self {
             report: OperationError {
-                code: code.into(),
+                code,
                 category,
                 message: redactor.redact_text(message.as_ref()),
                 context: redact_context(context, redactor),

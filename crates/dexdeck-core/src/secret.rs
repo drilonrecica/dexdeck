@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     ffi::{OsStr, OsString},
     fmt,
 };
@@ -103,6 +104,107 @@ impl SecretRedactor {
             })
             .collect()
     }
+
+    fn maximum_pattern_bytes(&self) -> usize {
+        self.patterns.iter().map(String::len).max().unwrap_or(1)
+    }
+}
+
+pub fn resolve_environment_references<'a>(
+    redactor: &mut SecretRedactor,
+    names: impl IntoIterator<Item = &'a str>,
+) -> Result<BTreeMap<String, SensitiveValue>, SecretError> {
+    let mut resolved = BTreeMap::new();
+    for name in names {
+        let value = redactor.register_environment(name)?;
+        resolved.insert(name.to_owned(), value);
+    }
+    Ok(resolved)
+}
+
+/// Redacts a text stream without exposing secrets split across read boundaries.
+#[derive(Clone, Debug)]
+pub struct StreamingSecretRedactor {
+    redactor: SecretRedactor,
+    pending: String,
+    discarding_oversized_token: bool,
+}
+
+impl StreamingSecretRedactor {
+    #[must_use]
+    pub fn new(redactor: SecretRedactor) -> Self {
+        Self {
+            redactor,
+            pending: String::new(),
+            discarding_oversized_token: false,
+        }
+    }
+
+    /// Returns only the prefix that is safe to publish. Call `finish` at EOF.
+    pub fn push(&mut self, chunk: &str) -> String {
+        const MAX_PENDING_TOKEN_BYTES: usize = 64 * 1024;
+        if self.discarding_oversized_token {
+            let Some((index, character)) = chunk
+                .char_indices()
+                .find(|(_, value)| value.is_whitespace())
+            else {
+                return String::new();
+            };
+            self.discarding_oversized_token = false;
+            let remainder = &chunk[index + character.len_utf8()..];
+            let mut output = character.to_string();
+            output.push_str(&self.push(remainder));
+            return output;
+        }
+        self.pending.push_str(chunk);
+        let retained = self.redactor.maximum_pattern_bytes().saturating_sub(1);
+        if self.pending.len() <= retained {
+            return String::new();
+        }
+        let desired = self.pending.len() - retained;
+        let Some(mut boundary) = self
+            .pending
+            .char_indices()
+            .filter(|(index, character)| {
+                character.is_whitespace() && index + character.len_utf8() <= desired
+            })
+            .map(|(index, character)| index + character.len_utf8())
+            .next_back()
+        else {
+            if self.pending.len() > MAX_PENDING_TOKEN_BYTES {
+                self.pending.clear();
+                self.discarding_oversized_token = true;
+                return REDACTED.to_owned();
+            }
+            return String::new();
+        };
+        loop {
+            let previous = boundary;
+            for pattern in &self.redactor.patterns {
+                for (start, _) in self.pending.match_indices(pattern) {
+                    let end = start + pattern.len();
+                    if start < boundary && end > boundary {
+                        boundary = end;
+                    }
+                }
+            }
+            if boundary == previous {
+                break;
+            }
+        }
+        let suffix = self.pending.split_off(boundary);
+        let prefix = std::mem::replace(&mut self.pending, suffix);
+        self.redactor.redact_text(&prefix)
+    }
+
+    #[must_use]
+    pub fn finish(mut self) -> String {
+        if self.discarding_oversized_token {
+            return String::new();
+        }
+        self.redactor
+            .redact_text(&std::mem::take(&mut self.pending))
+    }
 }
 
 fn redact_assignments(input: &str) -> String {
@@ -146,7 +248,7 @@ fn sensitive_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use dexdeck_protocol::{ErrorCategory, OperationContext};
+    use dexdeck_protocol::{ErrorCategory, ErrorCode, OperationContext};
     use proptest::prelude::*;
 
     use super::*;
@@ -182,13 +284,51 @@ mod tests {
     }
 
     #[test]
+    fn streaming_redactor_hides_values_split_across_chunks() {
+        let mut redactor = SecretRedactor::new();
+        redactor.register(&SensitiveValue::new("boundary-secret"));
+        let mut stream = StreamingSecretRedactor::new(redactor);
+        let mut output = stream.push("before boundary-");
+        output.push_str(&stream.push("secret after"));
+        output.push_str(&stream.finish());
+        assert_eq!(output, "before [REDACTED] after");
+        assert!(!output.contains("boundary-secret"));
+    }
+
+    #[test]
+    fn streaming_redactor_hides_sensitive_assignments_split_across_chunks() {
+        let mut stream = StreamingSecretRedactor::new(SecretRedactor::new());
+        let mut output = stream.push("failure pass");
+        output.push_str(&stream.push("word=unregistered-value next"));
+        output.push_str(&stream.finish());
+        assert_eq!(output, "failure password=[REDACTED] next");
+        assert!(!output.contains("unregistered-value"));
+    }
+
+    #[test]
+    fn every_resolved_environment_reference_is_registered() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let Some(path) = std::env::var_os("PATH") else {
+            return Ok(());
+        };
+        let Some(path) = path.to_str() else {
+            return Ok(());
+        };
+        let mut redactor = SecretRedactor::new();
+        let resolved = resolve_environment_references(&mut redactor, ["PATH"])?;
+        assert!(resolved.contains_key("PATH"));
+        assert!(!redactor.redact_text(path).contains(path));
+        Ok(())
+    }
+
+    #[test]
     fn errors_are_redacted_before_becoming_protocol_data() -> Result<(), Box<dyn std::error::Error>>
     {
         let secret = SensitiveValue::new("private-value");
         let mut redactor = SecretRedactor::new();
         redactor.register(&secret);
         let error = DexError::new(
-            "build.failed",
+            ErrorCode::GradleFailed,
             ErrorCategory::GradleOperation,
             "Gradle printed private-value",
             OperationContext {

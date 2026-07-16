@@ -15,7 +15,7 @@ pub use app::{
 };
 pub use debug_diagnostics::{
     DEFAULT_DEBUG_BYTES, DEFAULT_DEBUG_ENTRIES, DebugDiagnosticError, DebugDiagnostics, DebugEntry,
-    DebugLevel,
+    DebugLevel, record_process_diagnostic, render_process_diagnostics,
 };
 pub use error::DexError;
 pub use job::{
@@ -28,4 +28,7 @@ pub use runtime::{
     DispatchError, EffectId, EffectRequest, IdGenerator, Reducer, Reduction, ReductionContext,
     Runtime, RuntimeConfig, RuntimeError, RuntimeParts, SystemClock,
 };
-pub use secret::{REDACTED, SecretError, SecretRedactor, SensitiveValue};
+pub use secret::{
+    REDACTED, SecretError, SecretRedactor, SensitiveValue, StreamingSecretRedactor,
+    resolve_environment_references,
+};
