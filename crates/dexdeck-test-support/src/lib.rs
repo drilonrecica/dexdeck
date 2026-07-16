@@ -133,15 +133,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fixture_matrix_materializes_every_shape() {
-        let directory = tempfile::tempdir().expect("tempdir");
+    fn fixture_matrix_materializes_every_shape() -> std::io::Result<()> {
+        let directory = tempfile::tempdir()?;
         for fixture in AndroidFixture::ALL {
-            let root = fixture.write_to(directory.path()).expect("fixture");
+            let root = fixture.write_to(directory.path())?;
             assert!(root.join("app/src/main/AndroidManifest.xml").is_file());
         }
         assert_eq!(
             AGP_COMPATIBILITY_LANES,
             ["8.0.2", "8.13.0", "9.0.1", "9.3.0"]
         );
+        Ok(())
     }
 }
