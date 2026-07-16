@@ -5,6 +5,7 @@ use std::{
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dexdeck_protocol::CLI_SCHEMA_VERSION;
+use dexdeck_tui::ShellOptions;
 use serde::Serialize;
 
 #[derive(Parser)]
@@ -62,6 +63,16 @@ impl fmt::Debug for Cli {
             .field("yes", &self.yes)
             .field("has_command", &self.command.is_some())
             .finish()
+    }
+}
+
+impl Cli {
+    #[must_use]
+    pub fn shell_options(&self) -> Option<ShellOptions> {
+        self.command.is_none().then_some(ShellOptions {
+            no_color: self.no_color,
+            ascii: self.ascii,
+        })
     }
 }
 
@@ -248,6 +259,9 @@ pub fn execute(
                 stderr,
                 "interactive mode requires terminal stdin and stdout; use a subcommand",
             );
+        }
+        if cli.format != OutputFormat::Human {
+            return write_error(stderr, "interactive mode only supports --format human");
         }
         return DexdeckExitCode::Success;
     };
