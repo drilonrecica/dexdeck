@@ -197,7 +197,7 @@ tree cancellation works; CLI emits valid schema-v1 output.
 - Reject partial output after failure/cancellation.
 - Commit: "feat(gradle): embed and invoke the bridge"
 
-### F2.7 Orchestrate project model refresh — P0/High
+### F2.7 Orchestrate project model refresh — P0/High ✅
 
 - Implement provisional discovery, cache load, async validation, Gradle refresh,
   normalization, cancellation, and explicit freshness states.
