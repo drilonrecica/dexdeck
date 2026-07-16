@@ -383,7 +383,7 @@ all processes; memory is bounded; no automatic disk writes occur.
 - Refuse ambiguous reconstruction with a precise explanation.
 - Commit: "feat(test): rerun failed test selections"
 
-### F5.4 Normalize build diagnostics — P0/High
+### F5.4 Normalize build diagnostics — P0/High ✅
 
 - Incrementally parse Kotlin, Java, resource, manifest, Gradle, ADB, test, and
   practical lint output into the normalized diagnostic schema.
