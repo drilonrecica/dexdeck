@@ -9,10 +9,18 @@ import dev.dexdeck.bridge.ModelBridge
 
 def observedVariants = Collections.synchronizedMap([:])
 def observedVariantBuilders = Collections.synchronizedMap([:])
+def modelAdapters = Collections.synchronizedMap([:])
 
 gradle.allprojects { project ->
     ["com.android.application", "com.android.library"].each { pluginId ->
         project.pluginManager.withPlugin(pluginId) {
+            def androidPlugin = project.plugins.findPlugin(pluginId)
+            def detectedAgp = androidPlugin.class.classLoader
+                .loadClass("com.android.builder.model.Version")
+                .getField("ANDROID_GRADLE_PLUGIN_VERSION").get(null).toString()
+            def adapter = modelAdapters.computeIfAbsent(detectedAgp) {
+                ModelBridge.loadAdapter(detectedAgp, androidPlugin.class.classLoader)
+            }
             def components = project.extensions.findByName("androidComponents")
             if (components != null) {
                 components.beforeVariants(components.selector().all()) { builder ->
@@ -20,22 +28,12 @@ gradle.allprojects { project ->
                 }
                 components.onVariants(components.selector().all()) { variant ->
                     def values = observedVariants.computeIfAbsent(project.path) { [] }
-                    def value = [
-                        name: variant.name,
-                        enabled: true,
-                        buildType: variant.buildType ?: ""
-                    ]
+                    def value = new LinkedHashMap(adapter.modelVariant(variant))
                     if (variant.hasProperty("productFlavors")) {
                         def flavors = variant.productFlavors.collect { flavor ->
                             [dimension: flavor.first.toString(), flavor: flavor.second.toString()]
                         }.sort { it.dimension }
                         if (!flavors.isEmpty()) value.flavors = flavors
-                    }
-                    if (variant.hasProperty("applicationId")) {
-                        value.__applicationId = variant.getApplicationId()
-                    }
-                    if (variant.hasProperty("namespace")) {
-                        value.__namespace = variant.getNamespace()
                     }
                     value.tasks = [:]
                     def capitalized = variant.name.substring(0, 1).toUpperCase(Locale.ROOT) + variant.name.substring(1)
@@ -161,10 +159,9 @@ gradle.rootProject { root ->
                         value.enabled = observed.enabled
                         value.buildType = observed.buildType
                         if (observed.flavors != null) value.flavors = observed.flavors
-                        def applicationId = observed.__applicationId instanceof org.gradle.api.provider.Provider ? observed.__applicationId.orNull : observed.__applicationId
-                        if (applicationId != null) value.applicationId = applicationId.toString()
-                        def namespace = observed.__namespace instanceof org.gradle.api.provider.Provider ? observed.__namespace.orNull : observed.__namespace
-                        if (namespace != null) value.namespace = namespace.toString()
+                        if (observed.applicationId != null) value.applicationId = observed.applicationId.toString()
+                        if (observed.namespace != null) value.namespace = observed.namespace.toString()
+                        if (observed.debuggable != null) value.debuggable = observed.debuggable
                         value.tasks = observed.tasks
                         value
                     }

@@ -6,6 +6,8 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.List;
@@ -15,6 +17,25 @@ public final class ModelBridge {
     public static final int PROTOCOL_VERSION = 1;
 
     private ModelBridge() {}
+
+    public static Object loadAdapter(String agpVersion, ClassLoader agpClassLoader) {
+        String className;
+        if (agpVersion.startsWith("8.")) {
+            className = "dev.dexdeck.bridge.agp8.Agp8ModelAdapter";
+        } else if (agpVersion.startsWith("9.")) {
+            className = "dev.dexdeck.bridge.agp9.Agp9ModelAdapter";
+        } else {
+            throw new IllegalArgumentException("unsupported Android Gradle Plugin " + agpVersion);
+        }
+        try {
+            URL bridgeJar = ModelBridge.class.getProtectionDomain().getCodeSource().getLocation();
+            ClassLoader adapterLoader = new URLClassLoader(new URL[] {bridgeJar}, agpClassLoader);
+            return Class.forName(className, true, adapterLoader)
+                    .getDeclaredConstructor().newInstance();
+        } catch (ReflectiveOperationException failure) {
+            throw new IllegalStateException("cannot load bridge adapter " + className, failure);
+        }
+    }
 
     public static void writeModel(Path output, List<String> records, String canonicalModelJson)
             throws IOException {
