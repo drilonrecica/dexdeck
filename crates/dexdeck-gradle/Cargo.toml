@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 dexdeck-protocol = { version = "0.2.0", path = "../dexdeck-protocol" }
+sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
