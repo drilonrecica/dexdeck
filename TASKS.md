@@ -204,7 +204,7 @@ tree cancellation works; CLI emits valid schema-v1 output.
 - Preserve the previous snapshot when refresh fails.
 - Commit: "feat(gradle): orchestrate project model refresh"
 
-### F2.8 Cache and fingerprint models — P0/Critical
+### F2.8 Cache and fingerprint models — P0/Critical ✅
 
 - Persist versioned model/fingerprint files atomically.
 - Fingerprint only model inputs using metadata first and content hashes for
