@@ -425,7 +425,7 @@ structured, rerunnable, and source-addressable in CLI and TUI.
 - Centralize startup/shutdown and convert worker failures to actions.
 - Commit: "feat(app): compose DexDeck services"
 
-### F6.2 Add responsive Lazuli dashboard — P1/High
+### F6.2 Add responsive Lazuli dashboard — P1/High ✅
 
 - Implement full, compact, single-workspace, and resize-warning layouts plus
   true-color, 256, 16, monochrome, and light-background adaptations.

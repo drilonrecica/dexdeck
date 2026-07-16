@@ -34,6 +34,29 @@ use crate::{
 pub const MINIMUM_WIDTH: u16 = 40;
 pub const MINIMUM_HEIGHT: u16 = 10;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DashboardLayout {
+    Full,
+    Compact,
+    SingleWorkspace,
+    ResizeWarning,
+}
+
+impl DashboardLayout {
+    #[must_use]
+    pub const fn for_size(width: u16, height: u16) -> Self {
+        if width < MINIMUM_WIDTH || height < MINIMUM_HEIGHT {
+            Self::ResizeWarning
+        } else if width >= 120 && height >= 24 {
+            Self::Full
+        } else if width >= 80 && height >= 16 {
+            Self::Compact
+        } else {
+            Self::SingleWorkspace
+        }
+    }
+}
+
 const ASCII_BORDER: border::Set = border::Set {
     top_left: "+",
     top_right: "+",
@@ -277,7 +300,8 @@ fn render(frame: &mut Frame<'_>, state: &mut ShellState, theme: LazuliTheme) {
         ),
         area,
     );
-    if area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT {
+    let layout_mode = DashboardLayout::for_size(area.width, area.height);
+    if layout_mode == DashboardLayout::ResizeWarning {
         render_resize_message(frame, area, theme);
         return;
     }
@@ -285,8 +309,16 @@ fn render(frame: &mut Frame<'_>, state: &mut ShellState, theme: LazuliTheme) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Length(3),
+            Constraint::Length(if layout_mode == DashboardLayout::SingleWorkspace {
+                1
+            } else {
+                3
+            }),
+            Constraint::Length(if layout_mode == DashboardLayout::Full {
+                3
+            } else {
+                1
+            }),
             Constraint::Min(3),
             Constraint::Length(1),
         ])
@@ -297,49 +329,79 @@ fn render(frame: &mut Frame<'_>, state: &mut ShellState, theme: LazuliTheme) {
     } else {
         "▰▱ DexDeck"
     };
+    let project_status = if layout_mode == DashboardLayout::SingleWorkspace {
+        "  project: detecting | model: unavailable"
+    } else {
+        "  project: detecting  model: unavailable"
+    };
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled(
+            title,
+            Style::default()
+                .fg(theme.colors.action)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(project_status, Style::default().fg(theme.colors.text_muted)),
+    ]));
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                title,
-                Style::default()
-                    .fg(theme.colors.action)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "  project: detecting  model: unavailable",
-                Style::default().fg(theme.colors.text_muted),
-            ),
-        ]))
-        .block(panel(" Control plane ", theme)),
+        if layout_mode == DashboardLayout::SingleWorkspace {
+            header
+        } else {
+            header.block(panel(" Control plane ", theme))
+        },
         rows[0],
     );
+    let actions = match layout_mode {
+        DashboardLayout::Full => {
+            "[Run] [Build] [Test] [Logs] [Devices] [Tasks]     Ctrl+P Commands"
+        }
+        DashboardLayout::Compact => "Run  Build  Test  Logs  Devices  Tasks  ^P Commands",
+        DashboardLayout::SingleWorkspace => "^P Commands | ^T Tests | ^L Logs",
+        DashboardLayout::ResizeWarning => unreachable!(),
+    };
     frame.render_widget(
-        Paragraph::new("[Run] [Build] [Test] [Logs] [Devices] [Tasks]     Ctrl+P Commands")
-            .style(Style::default().fg(theme.colors.focus))
-            .block(panel(" Actions ", theme)),
+        Paragraph::new(actions).style(Style::default().fg(theme.colors.focus)),
         rows[1],
     );
 
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(28), Constraint::Percentage(72)])
-        .split(rows[2]);
-    frame.render_widget(
-        Paragraph::new("Modules\nVariants\nProfiles\n\nDevice: none")
-            .style(Style::default().fg(theme.colors.text_primary))
-            .block(panel(" Navigation ", theme)),
-        columns[0],
-    );
+    let workspace = if layout_mode == DashboardLayout::SingleWorkspace {
+        rows[2]
+    } else {
+        let navigation_width = if layout_mode == DashboardLayout::Full {
+            28
+        } else {
+            34
+        };
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(navigation_width),
+                Constraint::Percentage(100 - navigation_width),
+            ])
+            .split(rows[2]);
+        let navigation = if layout_mode == DashboardLayout::Full {
+            "Modules\nVariants\nProfiles\n\nDevice: none\nSDK: detecting"
+        } else {
+            "Module / Variant\nDevice: none"
+        };
+        frame.render_widget(
+            Paragraph::new(navigation)
+                .style(Style::default().fg(theme.colors.text_primary))
+                .block(panel(" Navigation ", theme)),
+            columns[0],
+        );
+        columns[1]
+    };
     if state.logcat_active {
-        state.logcat.render(frame, columns[1], theme);
+        state.logcat.render(frame, workspace, theme);
     } else if state.tests_active {
-        state.tests.render(frame, columns[1], theme);
+        state.tests.render(frame, workspace, theme);
     } else {
         frame.render_widget(
             Paragraph::new("Project overview\n\nWaiting for project discovery.")
                 .style(Style::default().fg(theme.colors.text_primary))
                 .block(panel(" Workspace ", theme)),
-            columns[1],
+            workspace,
         );
     }
 
@@ -349,8 +411,8 @@ fn render(frame: &mut Frame<'_>, state: &mut ShellState, theme: LazuliTheme) {
     );
     frame.render_widget(
         Paragraph::new(format!(
-            "Ready | {size} | input events: {} | q quit",
-            state.input_count
+            "OK Ready | {size} | {:?} | input: {} | q quit",
+            layout_mode, state.input_count
         ))
         .style(Style::default().fg(theme.colors.text_muted)),
         rows[3],

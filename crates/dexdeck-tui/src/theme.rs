@@ -61,7 +61,29 @@ pub struct LazuliTheme {
 impl LazuliTheme {
     #[must_use]
     pub fn new(capability: ColorCapability, glyphs: GlyphMode) -> Self {
+        Self::for_background(capability, glyphs, light_background_detected())
+    }
+
+    #[must_use]
+    pub fn for_background(
+        capability: ColorCapability,
+        glyphs: GlyphMode,
+        light_background: bool,
+    ) -> Self {
         let colors = match capability {
+            ColorCapability::TrueColor if light_background => SemanticColors {
+                background: Color::Rgb(247, 249, 253),
+                surface: Color::Rgb(229, 237, 250),
+                border: Color::Rgb(88, 105, 134),
+                text_primary: Color::Rgb(22, 31, 48),
+                text_muted: Color::Rgb(75, 88, 110),
+                action: Color::Rgb(20, 82, 185),
+                focus: Color::Rgb(0, 93, 199),
+                success: Color::Rgb(18, 119, 75),
+                warning: Color::Rgb(151, 91, 0),
+                error: Color::Rgb(180, 38, 55),
+                info: Color::Rgb(0, 112, 128),
+            },
             ColorCapability::TrueColor => SemanticColors {
                 background: Color::Rgb(11, 16, 32),
                 surface: Color::Rgb(20, 38, 74),
@@ -74,6 +96,19 @@ impl LazuliTheme {
                 warning: Color::Rgb(242, 184, 91),
                 error: Color::Rgb(255, 102, 122),
                 info: Color::Rgb(89, 221, 234),
+            },
+            ColorCapability::Ansi256 if light_background => SemanticColors {
+                background: Color::Indexed(255),
+                surface: Color::Indexed(153),
+                border: Color::Indexed(60),
+                text_primary: Color::Indexed(234),
+                text_muted: Color::Indexed(60),
+                action: Color::Indexed(25),
+                focus: Color::Indexed(27),
+                success: Color::Indexed(28),
+                warning: Color::Indexed(130),
+                error: Color::Indexed(160),
+                info: Color::Indexed(30),
             },
             ColorCapability::Ansi256 => SemanticColors {
                 background: Color::Indexed(17),
@@ -117,6 +152,18 @@ impl LazuliTheme {
         };
         Self { colors, glyphs }
     }
+}
+
+fn light_background_detected() -> bool {
+    let Some(value) = env::var_os("COLORFGBG") else {
+        return false;
+    };
+    value
+        .to_string_lossy()
+        .rsplit(';')
+        .next()
+        .and_then(|value| value.parse::<u8>().ok())
+        .is_some_and(|background| background >= 7)
 }
 
 #[cfg(test)]
