@@ -438,7 +438,7 @@ structured, rerunnable, and source-addressable in CLI and TUI.
   configurable named actions, conflict detection, Vim preset, mouse, and panes.
 - Commit: "feat(tui): add palette and input controls"
 
-### F6.4 Add run and job workspaces — P1/High
+### F6.4 Add run and job workspaces — P1/High ✅
 
 - Keep project/module/variant/device/model/app/job state visible and add
   selections, explicit workflows, queue, output, diagnostics, and history.
