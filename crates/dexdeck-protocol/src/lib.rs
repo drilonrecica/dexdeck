@@ -20,7 +20,7 @@ pub use cli::{
 };
 pub use diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, SourceLocation};
 pub use job::{JobId, JobKind, JobRecord, JobState};
-pub use log::{LogPriority, LogRecord};
+pub use log::{LogMarkerKind, LogPriority, LogRecord};
 pub use model::{
     AndroidModule, Artifact, ArtifactKind, BuildInfo, BuildType, FlavorDimension, GradleTask,
     IncludedBuild, LaunchComponent, ModuleKind, ProductFlavor, ProjectModel, TaskKind,

@@ -11,6 +11,14 @@ pub enum LogPriority {
     Fatal,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LogMarkerKind {
+    JavaCrash,
+    NativeCrash,
+    Anr,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogRecord {
@@ -28,4 +36,10 @@ pub struct LogRecord {
     pub process: Option<String>,
     pub continuation: bool,
     pub crash_boundary: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marker: Option<LogMarkerKind>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }

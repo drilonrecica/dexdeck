@@ -309,7 +309,7 @@ stop; normal workflows preserve data; cancellation leaves no process behind.
 
 ## Phase 4 — Structured bounded Logcat
 
-### F4.1 Parse structured log streams — P0/Critical
+### F4.1 Parse structured log streams — P0/Critical ✅
 
 - Incrementally parse timestamps, PID/TID/UID, priority, tag, message, process,
   continuations, Java/native crashes, and best-effort ANR markers.
