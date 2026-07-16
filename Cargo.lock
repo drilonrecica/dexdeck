@@ -309,6 +309,10 @@ dependencies = [
 [[package]]
 name = "dexdeck-gradle"
 version = "0.2.0"
+dependencies = [
+ "tempfile",
+ "thiserror",
+]
 
 [[package]]
 name = "dexdeck-protocol"
