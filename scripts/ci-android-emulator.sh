@@ -90,7 +90,7 @@ public final class SmokeTest extends android.test.InstrumentationTestCase {
 }
 JAVA
 cat >> "$project/app/build.gradle.kts" <<'GRADLE'
-android { defaultConfig { applicationId = "dev.dexdeck.fixture"; minSdk = 23; testInstrumentationRunner = "android.test.InstrumentationTestRunner" } }
+android { defaultConfig { applicationId = "dev.dexdeck.fixture"; minSdk = 23; targetSdk = 35; testInstrumentationRunner = "android.test.InstrumentationTestRunner" } }
 GRADLE
 
 cargo build -p dexdeck
