@@ -6,6 +6,12 @@ on:
       tag:
         required: true
         type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published DexDeck release tag
+        required: true
+        type: string
 
 permissions:
   contents: read
