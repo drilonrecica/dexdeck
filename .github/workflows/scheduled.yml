@@ -32,11 +32,16 @@ jobs:
         run: rustup toolchain install 1.97.0 --profile minimal
       - name: Verify SDK and ADB integration
         run: |
-          adb version
-          adb start-server
-          adb devices -l
+          android_home="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          sdkmanager="$android_home/cmdline-tools/latest/bin/sdkmanager"
+          "$sdkmanager" --install platform-tools
+          adb="$android_home/platform-tools/adb"
+          export ANDROID_HOME="$android_home" ANDROID_SDK_ROOT="$android_home"
+          "$adb" version
+          "$adb" start-server
+          "$adb" devices -l
           cargo run -p dexdeck -- doctor
-          adb kill-server
+          "$adb" kill-server
 
   emulator-daily-loop:
     name: Emulator install, launch, and instrumentation
