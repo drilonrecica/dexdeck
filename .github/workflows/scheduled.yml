@@ -34,7 +34,7 @@ jobs:
         run: |
           android_home="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
           sdkmanager="$android_home/cmdline-tools/latest/bin/sdkmanager"
-          "$sdkmanager" --install platform-tools
+          "$sdkmanager" --install platform-tools emulator
           adb="$android_home/platform-tools/adb"
           export ANDROID_HOME="$android_home" ANDROID_SDK_ROOT="$android_home"
           "$adb" version
