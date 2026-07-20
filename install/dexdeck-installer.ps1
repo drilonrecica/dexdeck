@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-$Version = if ($env:DEXDECK_VERSION) { $env:DEXDECK_VERSION } else { "0.2.0" }
+$Version = if ($env:DEXDECK_VERSION) { $env:DEXDECK_VERSION } else { "0.2.1" }
 $Repository = if ($env:DEXDECK_REPOSITORY) { $env:DEXDECK_REPOSITORY } else { "drilonrecica/dexdeck" }
 $InstallDir = if ($env:DEXDECK_INSTALL_DIR) { $env:DEXDECK_INSTALL_DIR } else { Join-Path $HOME ".cargo\bin" }
 $Target = "x86_64-pc-windows-msvc"

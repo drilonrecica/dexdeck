@@ -2,7 +2,36 @@
 
 ## Unreleased
 
-No changes after the 0.2.0 release candidate.
+No changes after 0.2.1.
+
+## 0.2.1 — 2026-07-20
+
+DexDeck 0.2.1 modernizes the terminal interface and repairs the release
+validation path used after 0.2.0.
+
+### Changed
+
+- Replaced the nested boxed dashboard with a border-light Lazuli canvas,
+  seven-workspace top navigation, contextual guidance, and responsive layouts.
+- Added selectable command, help, and search overlays plus consistent keyboard
+  and mouse navigation.
+- Changed normal-screen exit behavior: `Esc` closes or returns, while `q` and
+  `Ctrl+C` request a safe exit.
+- Preserved true-color, 256-color, ANSI-16, monochrome, light-background,
+  Unicode, and ASCII rendering fallbacks.
+
+### Fixed
+
+- Restored manual package-smoke dispatch and corrected Android emulator setup
+  and ADB resolution in release validation.
+- Made release artifact versions, titles, Homebrew commits, and readiness checks
+  derive from the release version instead of the original 0.2.0 constants.
+
+### Known limitations
+
+Run, test, device, task, and doctor actions are shown honestly as unavailable in
+the TUI until their service adapters are connected. Their CLI equivalents remain
+available. Windows x86-64 is experimental.
 
 ## 0.2.0 — release candidate
 

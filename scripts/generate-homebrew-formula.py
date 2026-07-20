@@ -37,15 +37,16 @@ def generate(template: pathlib.Path, checksums: pathlib.Path, version: str) -> s
 
 
 def self_test(template: pathlib.Path) -> None:
+    version = "9.8.7"
     with tempfile.TemporaryDirectory() as directory:
         checksums = pathlib.Path(directory) / "SHA256SUMS"
         lines = []
         for target in TARGETS:
-            name = f"dexdeck-0.2.0-{target}.tar.gz"
+            name = f"dexdeck-{version}-{target}.tar.gz"
             digest = hashlib.sha256(name.encode()).hexdigest()
             lines.append(f"{digest}  {name}")
         checksums.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        formula = generate(template, checksums, "0.2.0")
+        formula = generate(template, checksums, version)
         assert formula.count("sha256") == 4
         assert "@" not in formula
 

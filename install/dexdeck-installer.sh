@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-version=${DEXDECK_VERSION:-0.2.0}
+version=${DEXDECK_VERSION:-0.2.1}
 repository=${DEXDECK_REPOSITORY:-drilonrecica/dexdeck}
 install_dir=${DEXDECK_INSTALL_DIR:-${CARGO_HOME:-$HOME/.cargo}/bin}
 case "$(uname -s)-$(uname -m)" in

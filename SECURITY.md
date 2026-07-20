@@ -2,8 +2,8 @@
 
 ## Supported versions
 
-DexDeck has not published a supported release yet. After v0.2.0, the latest
-release line will receive security fixes.
+The latest 0.2.x release receives security fixes. Older 0.2.x releases should
+be upgraded before reporting a version-specific issue.
 
 ## Reporting a vulnerability
 

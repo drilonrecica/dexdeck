@@ -3,6 +3,8 @@ set -euo pipefail
 
 commands=(init doctor project modules variants devices emulators build install launch run rerun reinstall clean-reinstall stop uninstall clear-data test logs gradle emulator command version)
 files=(man/dexdeck.1 completions/dexdeck.bash completions/_dexdeck completions/dexdeck.fish)
+version=$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' Cargo.toml | head -n1)
+[[ -n "$version" ]]
 
 for command in "${commands[@]}"; do
   for file in "${files[@]}"; do
@@ -13,7 +15,8 @@ for command in "${commands[@]}"; do
   done
 done
 
-grep -Eq 'DexDeck 0\.2\.0' man/dexdeck.1 docs/demo.cast
+grep -Fq "DexDeck $version" man/dexdeck.1
+grep -Fq "DexDeck $version" docs/demo.cast
 grep -q 'docs/installation.md' README.md
 grep -q 'docs/privacy.md' README.md
 if grep -ERni 'droiddeck|DROIDDECK_' README.md docs completions man; then
