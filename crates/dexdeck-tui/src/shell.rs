@@ -9,7 +9,7 @@ use crossterm::{
     cursor::{Hide, Show},
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers,
+        KeyModifiers, MouseButton, MouseEventKind,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -17,19 +17,19 @@ use crossterm::{
 use ratatui::{
     Frame, Terminal,
     backend::{Backend, CrosstermBackend},
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Modifier, Style},
     symbols::border,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 
 use dexdeck_protocol::LogRecord;
 
 use crate::{
-    ActiveAnimation, ColorCapability, FocusPane, GlyphMode, LazuliTheme, LogOverlay,
-    LogWorkspaceAction, LogcatWorkspace, RunWorkspace, TerminalProfile, TestWorkspace, ToolingTab,
-    ToolingWorkspace, fuzzy_actions,
+    ActiveAnimation, ColorCapability, FocusRegion, GlyphMode, LazuliTheme, LogOverlay,
+    LogWorkspaceAction, LogcatWorkspace, NamedAction, OverviewWorkspace, RunWorkspace,
+    TerminalProfile, TestWorkspace, ToolingTab, ToolingWorkspace, WorkspaceId, fuzzy_actions,
 };
 
 pub const MINIMUM_WIDTH: u16 = 40;
@@ -109,21 +109,28 @@ pub struct ShellOptions {
 struct ShellState {
     input_count: u64,
     last_size: Option<(u16, u16)>,
-    logcat_active: bool,
-    tests_active: bool,
-    run_active: bool,
-    tooling_active: bool,
+    active_workspace: WorkspaceId,
     logcat_started: bool,
+    overview: OverviewWorkspace,
     logcat: LogcatWorkspace,
     tests: TestWorkspace,
     run: RunWorkspace,
     tooling: ToolingWorkspace,
     overlay: ControlOverlay,
     overlay_query: String,
-    focus: FocusPane,
+    overlay_selected: usize,
+    focus: FocusRegion,
     exit_prompt_jobs: Option<usize>,
+    notice: String,
+    hit_regions: Vec<HitRegion>,
     dirty: bool,
     animation: ActiveAnimation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct HitRegion {
+    area: Rect,
+    workspace: WorkspaceId,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -170,7 +177,7 @@ fn run_loop<B: Backend>(
     terminal.draw(|frame| render(frame, &mut state, theme))?;
     let mut last_draw = Instant::now();
     loop {
-        if state.logcat_active
+        if state.active_workspace == WorkspaceId::Logcat
             && let Some(backend) = backend.as_deref_mut()
         {
             drain_logcat_notifications(&mut state, backend);
@@ -178,8 +185,7 @@ fn run_loop<B: Backend>(
         if event::poll(Duration::from_millis(16))? {
             let event = event::read()?;
             state.dirty = true;
-            let overlay_open = state.overlay != ControlOverlay::None
-                || (state.logcat_active && state.logcat.overlay != LogOverlay::None);
+            let overlay_open = state.overlay != ControlOverlay::None;
             if state.exit_prompt_jobs.is_some() {
                 match event {
                     Event::Key(KeyEvent {
@@ -209,13 +215,9 @@ fn run_loop<B: Backend>(
                 continue;
             }
             if should_exit(&event) && !overlay_open {
-                let active_jobs = backend
-                    .as_deref()
-                    .map_or(0, |backend| backend.active_foreground_jobs());
-                if active_jobs == 0 {
+                if request_exit(&mut state, backend.as_deref()) {
                     return Ok(());
                 }
-                state.exit_prompt_jobs = Some(active_jobs);
                 continue;
             }
             match event {
@@ -228,28 +230,80 @@ fn run_loop<B: Backend>(
                     modifiers: KeyModifiers::CONTROL,
                     kind: KeyEventKind::Press,
                     ..
-                }) => {
+                }) if state.overlay == ControlOverlay::None => {
                     state.overlay = ControlOverlay::Palette;
                     state.overlay_query.clear();
+                    state.overlay_selected = 0;
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char('?'),
                     kind: KeyEventKind::Press,
                     ..
-                }) if !state.logcat_active => state.overlay = ControlOverlay::Help,
+                }) if state.overlay == ControlOverlay::None => state.overlay = ControlOverlay::Help,
                 Event::Key(KeyEvent {
                     code: KeyCode::Char('/'),
                     kind: KeyEventKind::Press,
                     ..
-                }) if !state.logcat_active => {
+                }) if matches!(
+                    state.active_workspace,
+                    WorkspaceId::Logcat | WorkspaceId::Devices | WorkspaceId::Tasks
+                ) && state.overlay == ControlOverlay::None =>
+                {
                     state.overlay = ControlOverlay::Search;
                     state.overlay_query.clear();
+                    apply_search_query(&mut state);
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('/'),
+                    kind: KeyEventKind::Press,
+                    ..
+                }) if state.overlay == ControlOverlay::None => {
+                    state.notice = "Search is not available in this workspace.".into();
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Esc,
                     kind: KeyEventKind::Press,
                     ..
                 }) if state.overlay != ControlOverlay::None => {
+                    state.overlay = ControlOverlay::None;
+                    state.logcat.overlay = LogOverlay::None;
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Up,
+                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                    ..
+                }) if state.overlay == ControlOverlay::Palette => {
+                    state.overlay_selected = state.overlay_selected.saturating_sub(1);
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Down,
+                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                    ..
+                }) if state.overlay == ControlOverlay::Palette => {
+                    let count = fuzzy_actions(&state.overlay_query).len();
+                    state.overlay_selected =
+                        (state.overlay_selected + 1).min(count.saturating_sub(1));
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Enter,
+                    kind: KeyEventKind::Press,
+                    ..
+                }) if state.overlay == ControlOverlay::Palette => {
+                    if let Some(item) =
+                        fuzzy_actions(&state.overlay_query).get(state.overlay_selected)
+                    {
+                        let action = item.action;
+                        state.overlay = ControlOverlay::None;
+                        if apply_named_action(&mut state, action, backend, profile)? {
+                            return Ok(());
+                        }
+                    }
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Enter,
+                    kind: KeyEventKind::Press,
+                    ..
+                }) if state.overlay == ControlOverlay::Search => {
                     state.overlay = ControlOverlay::None;
                 }
                 Event::Key(KeyEvent {
@@ -262,6 +316,10 @@ fn run_loop<B: Backend>(
                 ) =>
                 {
                     state.overlay_query.pop();
+                    state.overlay_selected = 0;
+                    if state.overlay == ControlOverlay::Search {
+                        apply_search_query(&mut state);
+                    }
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char(character),
@@ -273,7 +331,12 @@ fn run_loop<B: Backend>(
                 ) =>
                 {
                     state.overlay_query.push(character);
+                    state.overlay_selected = 0;
+                    if state.overlay == ControlOverlay::Search {
+                        apply_search_query(&mut state);
+                    }
                 }
+                Event::Key(_) | Event::Mouse(_) if state.overlay != ControlOverlay::None => {}
                 Event::Key(KeyEvent {
                     code: KeyCode::Tab,
                     kind: KeyEventKind::Press,
@@ -285,139 +348,121 @@ fn run_loop<B: Backend>(
                     ..
                 }) => state.focus = state.focus.previous(),
                 Event::Key(KeyEvent {
-                    code: KeyCode::Char(key @ ('d' | 'g')),
-                    modifiers: KeyModifiers::CONTROL,
-                    kind: KeyEventKind::Press,
+                    code: KeyCode::Char(number @ '1'..='7'),
+                    modifiers: KeyModifiers::NONE,
+                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
                     ..
                 }) => {
-                    state.tooling_active = true;
-                    state.run_active = false;
-                    state.tests_active = false;
-                    state.logcat_active = false;
-                    state.tooling.set_tab(if key == 'd' {
-                        ToolingTab::Devices
-                    } else {
-                        ToolingTab::GradleTasks
-                    });
-                    state.animation.start(6, profile.reduced_motion);
-                }
-                Event::Key(KeyEvent {
-                    code: KeyCode::Char('r'),
-                    modifiers: KeyModifiers::CONTROL,
-                    kind: KeyEventKind::Press,
-                    ..
-                }) => {
-                    state.run_active = true;
-                    state.tests_active = false;
-                    state.logcat_active = false;
-                    state.tooling_active = false;
-                    state.run.dirty = true;
-                    state.animation.start(6, profile.reduced_motion);
-                }
-                Event::Key(KeyEvent {
-                    code: KeyCode::Char('l'),
-                    modifiers: KeyModifiers::CONTROL,
-                    kind: KeyEventKind::Press,
-                    ..
-                }) => {
-                    state.logcat_active = true;
-                    state.tests_active = false;
-                    state.run_active = false;
-                    state.tooling_active = false;
-                    if !state.logcat_started {
-                        state.logcat_started = true;
-                        match backend.as_deref_mut() {
-                            Some(backend) => {
-                                if let Err(error) = backend.start() {
-                                    state
-                                        .logcat
-                                        .set_status(format!("Cannot start Logcat: {error}"));
-                                }
-                            }
-                            None => state.logcat.set_status(
-                                "Select a module, variant, package, and device to start Logcat.",
-                            ),
-                        }
+                    if let Some(workspace) = WorkspaceId::from_number(number) {
+                        activate_workspace(&mut state, workspace, backend, profile)?;
                     }
-                    state.animation.start(6, profile.reduced_motion);
                 }
                 Event::Key(KeyEvent {
-                    code: KeyCode::Char('t'),
-                    modifiers: KeyModifiers::CONTROL,
+                    code: KeyCode::Left,
+                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                    ..
+                }) if state.focus == FocusRegion::WorkspaceBar => {
+                    let workspace = adjacent_workspace(state.active_workspace, false);
+                    activate_workspace(&mut state, workspace, backend, profile)?;
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Right,
+                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                    ..
+                }) if state.focus == FocusRegion::WorkspaceBar => {
+                    let workspace = adjacent_workspace(state.active_workspace, true);
+                    activate_workspace(&mut state, workspace, backend, profile)?;
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Left | KeyCode::Right,
+                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                    ..
+                }) if matches!(
+                    state.active_workspace,
+                    WorkspaceId::Devices | WorkspaceId::Tasks
+                ) =>
+                {
+                    state.tooling.move_subview(true);
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Up,
+                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                    ..
+                }) => move_workspace_selection(&mut state, false),
+                Event::Key(KeyEvent {
+                    code: KeyCode::Down,
+                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                    ..
+                }) => move_workspace_selection(&mut state, true),
+                Event::Key(KeyEvent {
+                    code: KeyCode::Enter,
                     kind: KeyEventKind::Press,
                     ..
                 }) => {
-                    state.tests_active = true;
-                    state.logcat_active = false;
-                    state.run_active = false;
-                    state.tooling_active = false;
-                    state.tests.dirty = true;
-                    state.animation.start(6, profile.reduced_motion);
+                    activate_current_selection(&mut state);
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char(key),
                     kind: KeyEventKind::Press | KeyEventKind::Repeat,
                     ..
-                }) if state.tests_active => {
+                }) if state.active_workspace == WorkspaceId::Tests => {
                     state.input_count = state.input_count.saturating_add(1);
-                    let _ = state.tests.handle_key(key);
+                    let action = state.tests.handle_key(key);
+                    if action != crate::TestWorkspaceAction::None {
+                        state.notice = "This test action is not connected in this build.".into();
+                    }
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char(key),
                     kind: KeyEventKind::Press | KeyEventKind::Repeat,
                     ..
-                }) if state.tooling_active => {
+                }) if matches!(
+                    state.active_workspace,
+                    WorkspaceId::Devices | WorkspaceId::Tasks | WorkspaceId::Doctor
+                ) =>
+                {
                     state.input_count = state.input_count.saturating_add(1);
-                    let _ = state.tooling.handle_key(key);
+                    let action = state.tooling.handle_key(key);
+                    if action != crate::ToolingAction::None {
+                        state.notice = "This tooling action is not connected in this build.".into();
+                    }
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char(key),
                     kind: KeyEventKind::Press | KeyEventKind::Repeat,
                     ..
-                }) if state.run_active => {
+                }) if state.active_workspace == WorkspaceId::Run => {
                     state.input_count = state.input_count.saturating_add(1);
-                    let _ = state.run.handle_key(key);
+                    let action = state.run.handle_key(key);
+                    if action != crate::RunWorkspaceAction::None {
+                        state.notice = "This run action is not connected in this build.".into();
+                    }
                 }
                 Event::Key(
                     key @ KeyEvent {
                         kind: KeyEventKind::Press | KeyEventKind::Repeat,
                         ..
                     },
-                ) if state.logcat_active => {
+                ) if state.active_workspace == WorkspaceId::Logcat => {
                     state.input_count = state.input_count.saturating_add(1);
                     let action = state.logcat.handle_key(key);
-                    if let Some(backend) = backend.as_deref_mut() {
-                        let result = match action {
-                            LogWorkspaceAction::None => Ok(()),
-                            LogWorkspaceAction::ScopeChanged(device) => {
-                                backend.set_device_scope(device)
-                            }
-                            LogWorkspaceAction::ProcessSelectionRequested => {
-                                backend.select_process()
-                            }
-                            LogWorkspaceAction::CopyLine => backend.copy(false),
-                            LogWorkspaceAction::CopyGroup => backend.copy(true),
-                            LogWorkspaceAction::ExportRequested => backend.export(),
-                            LogWorkspaceAction::RecordingToggled => backend.toggle_recording(),
-                        };
-                        if let Err(error) = result {
-                            state.logcat.set_status(error);
-                        }
-                    }
+                    handle_logcat_action(&mut state, action, backend);
                 }
                 Event::Key(KeyEvent {
                     kind: KeyEventKind::Press | KeyEventKind::Repeat,
                     ..
                 }) => state.input_count = state.input_count.saturating_add(1),
-                Event::Mouse(mouse) if state.logcat_active => state.logcat.handle_mouse(mouse),
-                Event::Mouse(_) => state.input_count = state.input_count.saturating_add(1),
+                Event::Mouse(mouse) => handle_mouse(&mut state, mouse, backend, profile)?,
                 _ => {}
             }
         }
-        let workspace_dirty = (state.logcat_active && state.logcat.dirty)
-            || (state.tests_active && state.tests.dirty)
-            || (state.run_active && state.run.dirty)
-            || (state.tooling_active && state.tooling.dirty);
+        let workspace_dirty = match state.active_workspace {
+            WorkspaceId::Overview => state.overview.dirty,
+            WorkspaceId::Run => state.run.dirty,
+            WorkspaceId::Tests => state.tests.dirty,
+            WorkspaceId::Logcat => state.logcat.dirty,
+            WorkspaceId::Devices | WorkspaceId::Tasks | WorkspaceId::Doctor => state.tooling.dirty,
+        };
         let animation_dirty = state.animation.active();
         if last_draw.elapsed() >= profile.frame_interval()
             && (state.dirty || workspace_dirty || animation_dirty)
@@ -428,6 +473,224 @@ fn run_loop<B: Backend>(
             last_draw = Instant::now();
         }
     }
+}
+
+fn request_exit(state: &mut ShellState, backend: Option<&dyn LogcatBackend>) -> bool {
+    let active_jobs = backend.map_or(0, LogcatBackend::active_foreground_jobs);
+    if active_jobs == 0 {
+        true
+    } else {
+        state.exit_prompt_jobs = Some(active_jobs);
+        false
+    }
+}
+
+fn activate_workspace(
+    state: &mut ShellState,
+    workspace: WorkspaceId,
+    backend: &mut Option<Box<dyn LogcatBackend>>,
+    profile: TerminalProfile,
+) -> Result<(), ShellError> {
+    state.active_workspace = workspace;
+    state.notice.clear();
+    match workspace {
+        WorkspaceId::Devices
+            if !matches!(
+                state.tooling.tab,
+                ToolingTab::Devices | ToolingTab::Emulators
+            ) =>
+        {
+            state.tooling.set_tab(ToolingTab::Devices);
+        }
+        WorkspaceId::Tasks
+            if !matches!(
+                state.tooling.tab,
+                ToolingTab::GradleTasks | ToolingTab::Commands
+            ) =>
+        {
+            state.tooling.set_tab(ToolingTab::GradleTasks);
+        }
+        WorkspaceId::Doctor => state.tooling.set_tab(ToolingTab::Doctor),
+        WorkspaceId::Logcat if !state.logcat_started => {
+            state.logcat_started = true;
+            match backend.as_deref_mut() {
+                Some(backend) => backend.start().map_err(ShellError::Backend)?,
+                None => state
+                    .logcat
+                    .set_status("Select a module, variant, package, and device to start Logcat."),
+            }
+        }
+        _ => {}
+    }
+    state.animation.start(6, profile.reduced_motion);
+    state.dirty = true;
+    Ok(())
+}
+
+fn adjacent_workspace(current: WorkspaceId, forward: bool) -> WorkspaceId {
+    let index = WorkspaceId::ALL
+        .iter()
+        .position(|workspace| *workspace == current)
+        .unwrap_or_default();
+    let next = if forward {
+        (index + 1) % WorkspaceId::ALL.len()
+    } else {
+        index.checked_sub(1).unwrap_or(WorkspaceId::ALL.len() - 1)
+    };
+    WorkspaceId::ALL[next]
+}
+
+fn move_workspace_selection(state: &mut ShellState, down: bool) {
+    match state.active_workspace {
+        WorkspaceId::Overview => state.overview.move_selection(down),
+        WorkspaceId::Run => {
+            let _ = state.run.handle_key(if down { 'j' } else { 'k' });
+        }
+        WorkspaceId::Tests => {
+            let _ = state.tests.handle_key(if down { 'j' } else { 'k' });
+        }
+        WorkspaceId::Logcat => {
+            let code = if down { KeyCode::Down } else { KeyCode::Up };
+            let _ = state
+                .logcat
+                .handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+        }
+        WorkspaceId::Devices | WorkspaceId::Tasks | WorkspaceId::Doctor => {
+            let _ = state.tooling.handle_key(if down { 'j' } else { 'k' });
+        }
+    }
+}
+
+fn activate_current_selection(state: &mut ShellState) {
+    state.notice = match state.active_workspace {
+        WorkspaceId::Overview => "This action is not connected in this build.",
+        WorkspaceId::Run => "Run controls are not connected in this build.",
+        WorkspaceId::Tests => "Test controls are not connected in this build.",
+        WorkspaceId::Logcat => "Use Space to pause or Ctrl+P for Logcat actions.",
+        WorkspaceId::Devices | WorkspaceId::Tasks | WorkspaceId::Doctor => {
+            "Tooling controls are not connected in this build."
+        }
+    }
+    .into();
+}
+
+fn apply_search_query(state: &mut ShellState) {
+    match state.active_workspace {
+        WorkspaceId::Logcat => {
+            if let Err(error) = state.logcat.set_text_search(&state.overlay_query) {
+                state.logcat.set_status(format!("Invalid search: {error}"));
+            }
+        }
+        WorkspaceId::Devices | WorkspaceId::Tasks => {
+            state.tooling.set_search(state.overlay_query.clone());
+        }
+        _ => {}
+    }
+}
+
+fn apply_named_action(
+    state: &mut ShellState,
+    action: NamedAction,
+    backend: &mut Option<Box<dyn LogcatBackend>>,
+    profile: TerminalProfile,
+) -> Result<bool, ShellError> {
+    let workspace = match action {
+        NamedAction::Overview => Some(WorkspaceId::Overview),
+        NamedAction::Run => Some(WorkspaceId::Run),
+        NamedAction::Tests => Some(WorkspaceId::Tests),
+        NamedAction::Logcat => Some(WorkspaceId::Logcat),
+        NamedAction::Devices => Some(WorkspaceId::Devices),
+        NamedAction::Tasks => Some(WorkspaceId::Tasks),
+        NamedAction::Doctor => Some(WorkspaceId::Doctor),
+        _ => None,
+    };
+    if let Some(workspace) = workspace {
+        activate_workspace(state, workspace, backend, profile)?;
+        return Ok(false);
+    }
+    match action {
+        NamedAction::Help => state.overlay = ControlOverlay::Help,
+        NamedAction::Search => state.overlay = ControlOverlay::Search,
+        NamedAction::FocusNext => state.focus = state.focus.next(),
+        NamedAction::FocusPrevious => state.focus = state.focus.previous(),
+        NamedAction::Quit => return Ok(request_exit(state, backend.as_deref())),
+        NamedAction::CommandPalette => state.overlay = ControlOverlay::Palette,
+        _ => {}
+    }
+    Ok(false)
+}
+
+fn handle_logcat_action(
+    state: &mut ShellState,
+    action: LogWorkspaceAction,
+    backend: &mut Option<Box<dyn LogcatBackend>>,
+) {
+    let Some(backend) = backend.as_deref_mut() else {
+        if action != LogWorkspaceAction::None {
+            state
+                .logcat
+                .set_status("Logcat is not connected in this build.");
+        }
+        return;
+    };
+    let result = match action {
+        LogWorkspaceAction::None => Ok(()),
+        LogWorkspaceAction::ScopeChanged(device) => backend.set_device_scope(device),
+        LogWorkspaceAction::ProcessSelectionRequested => backend.select_process(),
+        LogWorkspaceAction::CopyLine => backend.copy(false),
+        LogWorkspaceAction::CopyGroup => backend.copy(true),
+        LogWorkspaceAction::ExportRequested => backend.export(),
+        LogWorkspaceAction::RecordingToggled => backend.toggle_recording(),
+    };
+    if let Err(error) = result {
+        state.logcat.set_status(error);
+    }
+}
+
+fn handle_mouse(
+    state: &mut ShellState,
+    mouse: crossterm::event::MouseEvent,
+    backend: &mut Option<Box<dyn LogcatBackend>>,
+    profile: TerminalProfile,
+) -> Result<(), ShellError> {
+    state.input_count = state.input_count.saturating_add(1);
+    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        && let Some(workspace) = state
+            .hit_regions
+            .iter()
+            .find(|region| point_in_rect(mouse.column, mouse.row, region.area))
+            .map(|region| region.workspace)
+    {
+        activate_workspace(state, workspace, backend, profile)?;
+        return Ok(());
+    }
+    if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+        let handled = match state.active_workspace {
+            WorkspaceId::Overview => state.overview.handle_click(mouse.column, mouse.row),
+            WorkspaceId::Run => state.run.handle_click(mouse.column, mouse.row),
+            WorkspaceId::Tests => state.tests.handle_click(mouse.column, mouse.row),
+            WorkspaceId::Devices | WorkspaceId::Tasks | WorkspaceId::Doctor => {
+                state.tooling.handle_click(mouse.column, mouse.row)
+            }
+            WorkspaceId::Logcat => false,
+        };
+        if handled {
+            return Ok(());
+        }
+    }
+    match mouse.kind {
+        MouseEventKind::ScrollUp => move_workspace_selection(state, false),
+        MouseEventKind::ScrollDown => move_workspace_selection(state, true),
+        _ => {}
+    }
+    Ok(())
+}
+
+fn point_in_rect(x: u16, y: u16, area: Rect) -> bool {
+    x >= area.x
+        && x < area.x.saturating_add(area.width)
+        && y >= area.y
+        && y < area.y.saturating_add(area.height)
 }
 
 fn drain_logcat_notifications(state: &mut ShellState, backend: &mut dyn LogcatBackend) -> usize {
@@ -460,7 +723,7 @@ fn should_exit(event: &Event) -> bool {
     matches!(
         event,
         Event::Key(KeyEvent {
-            code: KeyCode::Char('q') | KeyCode::Esc,
+            code: KeyCode::Char('q'),
             kind: KeyEventKind::Press,
             ..
         }) | Event::Key(KeyEvent {
@@ -474,137 +737,157 @@ fn should_exit(event: &Event) -> bool {
 
 fn render(frame: &mut Frame<'_>, state: &mut ShellState, theme: LazuliTheme) {
     let area = frame.area();
-    frame.render_widget(
-        Block::new().style(
-            Style::default()
-                .bg(theme.colors.background)
-                .fg(theme.colors.text_primary),
-        ),
-        area,
-    );
+    frame.render_widget(Block::new().style(theme.canvas()), area);
     let layout_mode = DashboardLayout::for_size(area.width, area.height);
     if layout_mode == DashboardLayout::ResizeWarning {
         render_resize_message(frame, area, theme);
         return;
     }
 
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(if layout_mode == DashboardLayout::SingleWorkspace {
-                1
-            } else {
-                3
-            }),
-            Constraint::Length(if layout_mode == DashboardLayout::Full {
-                3
-            } else {
-                1
-            }),
-            Constraint::Min(3),
-            Constraint::Length(1),
+    let rows = Layout::vertical([
+        Constraint::Length(if layout_mode == DashboardLayout::SingleWorkspace {
+            1
+        } else {
+            2
+        }),
+        Constraint::Length(2),
+        Constraint::Min(3),
+        Constraint::Length(1),
+    ])
+    .split(area);
+
+    let header_area = inset_horizontal(rows[0], 2);
+    let project = state
+        .overview
+        .project
+        .as_deref()
+        .or(state.run.project.as_deref())
+        .unwrap_or("Detecting project");
+    let target = match (&state.run.module, &state.run.variant) {
+        (Some(module), Some(variant)) => format!("{module} / {variant}"),
+        _ => "No target selected".into(),
+    };
+    let device = state.run.device.as_deref().unwrap_or("No device");
+    let context_separator = if theme.glyphs == GlyphMode::Ascii {
+        "|"
+    } else {
+        "·"
+    };
+    let mut header = vec![Line::from(vec![
+        Span::styled("DexDeck", theme.accent()),
+        Span::styled(format!("   {project}"), theme.muted()),
+    ])];
+    if layout_mode != DashboardLayout::SingleWorkspace {
+        header.push(Line::styled(
+            format!("{target}   {context_separator}   {device}"),
+            theme.muted(),
+        ));
+    }
+    frame.render_widget(Paragraph::new(header), header_area);
+
+    state.hit_regions.clear();
+    let tabs_area = inset_horizontal(Rect::new(rows[1].x, rows[1].y, rows[1].width, 1), 2);
+    let tabs = if layout_mode == DashboardLayout::SingleWorkspace {
+        Line::from(vec![
+            Span::styled(state.active_workspace.label(), theme.accent()),
+            Span::styled("   Ctrl+P Commands", theme.muted()),
         ])
-        .split(area);
-
-    let title = if theme.glyphs == GlyphMode::Ascii {
-        "[DD] DexDeck"
     } else {
-        "▰▱ DexDeck"
-    };
-    let project_status = if layout_mode == DashboardLayout::SingleWorkspace {
-        "  project: detecting | model: unavailable"
-    } else {
-        "  project: detecting  model: unavailable"
-    };
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(
-            title,
-            Style::default()
-                .fg(theme.colors.action)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(project_status, Style::default().fg(theme.colors.text_muted)),
-    ]));
-    frame.render_widget(
-        if layout_mode == DashboardLayout::SingleWorkspace {
-            header
-        } else {
-            header.block(panel(" Control plane ", theme))
-        },
-        rows[0],
-    );
-    let actions = match layout_mode {
-        DashboardLayout::Full => {
-            "[Run] [Build] [Test] [Logs] [Devices] [Tasks]     Ctrl+P Commands"
+        let mut spans = Vec::new();
+        let mut x = tabs_area.x;
+        for workspace in WorkspaceId::ALL {
+            let label = format!("{} {}  ", workspace.number(), workspace.label());
+            let width = u16::try_from(label.len()).unwrap_or(u16::MAX);
+            state.hit_regions.push(HitRegion {
+                area: Rect::new(x, tabs_area.y, width, 1),
+                workspace,
+            });
+            x = x.saturating_add(width);
+            spans.push(Span::styled(
+                label,
+                if workspace == state.active_workspace {
+                    theme.accent().add_modifier(Modifier::UNDERLINED)
+                } else {
+                    theme.muted()
+                },
+            ));
         }
-        DashboardLayout::Compact => "Run  Build  Test  Logs  Devices  Tasks  ^P Commands",
-        DashboardLayout::SingleWorkspace => "^P Commands | ^T Tests | ^L Logs",
-        DashboardLayout::ResizeWarning => unreachable!(),
+        Line::from(spans)
+    };
+    frame.render_widget(Paragraph::new(tabs), tabs_area);
+    let separator_area = inset_horizontal(
+        Rect::new(rows[1].x, rows[1].y.saturating_add(1), rows[1].width, 1),
+        2,
+    );
+    let separator = if theme.glyphs == GlyphMode::Ascii {
+        '-'
+    } else {
+        '─'
     };
     frame.render_widget(
-        Paragraph::new(actions).style(Style::default().fg(theme.colors.focus)),
-        rows[1],
+        Paragraph::new(
+            separator
+                .to_string()
+                .repeat(usize::from(separator_area.width)),
+        )
+        .style(theme.separator()),
+        separator_area,
     );
 
-    let workspace = if layout_mode == DashboardLayout::SingleWorkspace {
-        rows[2]
-    } else {
-        let navigation_width = if layout_mode == DashboardLayout::Full {
-            28
-        } else {
-            34
-        };
-        let columns = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(navigation_width),
-                Constraint::Percentage(100 - navigation_width),
-            ])
-            .split(rows[2]);
-        let navigation = if layout_mode == DashboardLayout::Full {
-            "Modules\nVariants\nProfiles\n\nDevice: none\nSDK: detecting"
-        } else {
-            "Module / Variant\nDevice: none"
-        };
-        frame.render_widget(
-            Paragraph::new(navigation)
-                .style(Style::default().fg(theme.colors.text_primary))
-                .block(panel(" Navigation ", theme)),
-            columns[0],
-        );
-        columns[1]
-    };
-    if state.logcat_active {
-        state.logcat.render(frame, workspace, theme);
-    } else if state.tests_active {
-        state.tests.render(frame, workspace, theme);
-    } else if state.run_active {
-        state.run.render(frame, workspace, theme);
-    } else if state.tooling_active {
-        state.tooling.render(frame, workspace, theme);
-    } else {
-        frame.render_widget(
-            Paragraph::new("Project overview\n\nWaiting for project discovery.")
-                .style(Style::default().fg(theme.colors.text_primary))
-                .block(panel(" Workspace ", theme)),
-            workspace,
-        );
+    let content = content_area(rows[2]);
+    match state.active_workspace {
+        WorkspaceId::Overview => state.overview.render(frame, content, layout_mode, theme),
+        WorkspaceId::Run => state.run.render(frame, content, theme),
+        WorkspaceId::Tests => state.tests.render(frame, content, theme),
+        WorkspaceId::Logcat => state.logcat.render(frame, content, theme),
+        WorkspaceId::Devices | WorkspaceId::Tasks | WorkspaceId::Doctor => {
+            state.tooling.render(frame, content, theme);
+        }
     }
 
-    let size = state.last_size.map_or_else(
-        || format!("{}x{}", area.width, area.height),
-        |(w, h)| format!("{w}x{h}"),
-    );
+    let footer_text = if state.notice.is_empty() {
+        state.overview.model_status.as_str()
+    } else {
+        state.notice.as_str()
+    };
+    let hints = if area.width >= 100 && theme.glyphs == GlyphMode::Unicode {
+        "Tab Focus   ↑↓ Select   Enter Choose   ? Shortcuts   q Quit"
+    } else if area.width >= 100 {
+        "Tab Focus   Up/Down Select   Enter Choose   ? Shortcuts   q Quit"
+    } else if area.width >= 70 {
+        "Tab Focus   Enter Choose   ? Help   q Quit"
+    } else {
+        "? Help   q Quit"
+    };
+    let available = usize::from(area.width.saturating_sub(4));
+    let gap = available
+        .saturating_sub(footer_text.len() + hints.len())
+        .max(2);
     frame.render_widget(
-        Paragraph::new(format!(
-            "OK Ready | {size} | {:?} | input: {} | q quit",
-            layout_mode, state.input_count
-        ))
-        .style(Style::default().fg(theme.colors.text_muted)),
-        rows[3],
+        Paragraph::new(format!("{footer_text}{}{hints}", " ".repeat(gap))).style(theme.muted()),
+        inset_horizontal(rows[3], 2),
     );
     render_control_overlay(frame, state, theme);
     render_exit_prompt(frame, state, theme);
+}
+
+fn inset_horizontal(area: Rect, amount: u16) -> Rect {
+    Rect::new(
+        area.x.saturating_add(amount),
+        area.y,
+        area.width.saturating_sub(amount.saturating_mul(2)),
+        area.height,
+    )
+}
+
+fn content_area(area: Rect) -> Rect {
+    let horizontal = inset_horizontal(area, 2);
+    Rect::new(
+        horizontal.x,
+        horizontal.y.saturating_add(1),
+        horizontal.width,
+        horizontal.height.saturating_sub(1),
+    )
 }
 
 fn render_exit_prompt(frame: &mut Frame<'_>, state: &ShellState, theme: LazuliTheme) {
@@ -619,6 +902,7 @@ fn render_exit_prompt(frame: &mut Frame<'_>, state: &ShellState, theme: LazuliTh
         width,
         5,
     );
+    frame.render_widget(Clear, prompt);
     frame.render_widget(
         Paragraph::new(format!(
             "{job_count} foreground job(s) are active.\ny/q detach and exit | c cancel owned jobs and exit | n stay"
@@ -651,19 +935,62 @@ fn render_control_overlay(frame: &mut Frame<'_>, state: &ShellState, theme: Lazu
             let matches = fuzzy_actions(&state.overlay_query);
             let rows = matches
                 .iter()
+                .enumerate()
                 .take(height.saturating_sub(3).into())
-                .map(|item| format!("{}  [{:?}]", item.action.label(), item.action))
-                .collect::<Vec<_>>()
-                .join("\n");
-            (" Commands ", format!("> {}\n{}", state.overlay_query, rows))
+                .map(|(index, item)| {
+                    Line::styled(
+                        format!(
+                            "{} {}",
+                            if index == state.overlay_selected {
+                                ">"
+                            } else {
+                                " "
+                            },
+                            item.action.label()
+                        ),
+                        if index == state.overlay_selected {
+                            theme.selected()
+                        } else {
+                            theme.muted()
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            let mut content = vec![Line::from(vec![
+                Span::styled("> ", theme.accent()),
+                Span::raw(&state.overlay_query),
+            ])];
+            content.extend(rows);
+            (" Commands ", content)
         }
         ControlOverlay::Help => (
             " Help ",
-            "Ctrl+P commands   Tab/Shift+Tab panes\nCtrl+T tests      Ctrl+L Logcat\n/ search          ? help\nMouse wheel scrolls virtual lists\nEsc closes overlays; q exits".into(),
+            vec![
+                Line::raw(if theme.glyphs == GlyphMode::Ascii {
+                    "1-7 workspaces      Tab / Shift+Tab focus"
+                } else {
+                    "1–7 workspaces      Tab / Shift+Tab focus"
+                }),
+                Line::raw(if theme.glyphs == GlyphMode::Ascii {
+                    "Up/Down select      Left/Right change view"
+                } else {
+                    "↑↓ select           ←→ change view"
+                }),
+                Line::raw("Enter open          / search"),
+                Line::raw("Ctrl+P commands     ? help"),
+                Line::raw("Esc closes overlays; q or Ctrl+C exits"),
+            ],
         ),
-        ControlOverlay::Search => (" Search ", format!("Query: {}", state.overlay_query)),
+        ControlOverlay::Search => (
+            " Search ",
+            vec![Line::from(vec![
+                Span::styled("> ", theme.accent()),
+                Span::raw(&state.overlay_query),
+            ])],
+        ),
         ControlOverlay::None => return,
     };
+    frame.render_widget(Clear, overlay);
     frame.render_widget(
         Paragraph::new(content)
             .style(
@@ -703,7 +1030,7 @@ fn panel(title: &'static str, theme: LazuliTheme) -> Block<'static> {
         .border_set(if theme.glyphs == GlyphMode::Ascii {
             ASCII_BORDER
         } else {
-            border::PLAIN
+            border::ROUNDED
         })
         .border_style(Style::default().fg(theme.colors.border))
         .style(Style::default().bg(theme.colors.surface))
@@ -822,7 +1149,7 @@ mod tests {
             ))
         };
         assert!(should_exit(&key(KeyCode::Char('q'), KeyModifiers::NONE)));
-        assert!(should_exit(&key(KeyCode::Esc, KeyModifiers::NONE)));
+        assert!(!should_exit(&key(KeyCode::Esc, KeyModifiers::NONE)));
         assert!(should_exit(&key(KeyCode::Char('c'), KeyModifiers::CONTROL)));
         assert!(!should_exit(&key(KeyCode::Char('x'), KeyModifiers::NONE)));
     }
@@ -855,8 +1182,85 @@ mod tests {
         ];
         assert_eq!(
             events.map(|event| should_exit(&event)),
-            [true, true, true, false]
+            [true, false, true, false]
         );
+    }
+
+    #[test]
+    fn full_layout_is_border_light_and_exposes_workspace_navigation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut terminal = Terminal::new(TestBackend::new(140, 40))?;
+        let theme = LazuliTheme::new(ColorCapability::NoColor, GlyphMode::Ascii);
+        let mut state = ShellState::default();
+        terminal.draw(|frame| render(frame, &mut state, theme))?;
+        let rendered = rendered_text(terminal.backend().buffer());
+
+        assert!(rendered.contains("DexDeck   Detecting project"));
+        assert!(rendered.contains("1 Overview"));
+        assert!(rendered.contains("7 Doctor"));
+        assert!(rendered.contains("Ready for development"));
+        assert!(!rendered.contains("+---"));
+        for unicode_only in ['·', '↑', '↓', '←', '→', '–', '▌'] {
+            assert!(!rendered.contains(unicode_only));
+        }
+        assert_eq!(state.hit_regions.len(), WorkspaceId::ALL.len());
+        Ok(())
+    }
+
+    #[test]
+    fn single_workspace_layout_collapses_the_tab_bar() -> Result<(), Box<dyn std::error::Error>> {
+        let mut terminal = Terminal::new(TestBackend::new(60, 14))?;
+        let theme = LazuliTheme::new(ColorCapability::NoColor, GlyphMode::Ascii);
+        let mut state = ShellState {
+            active_workspace: WorkspaceId::Tests,
+            ..ShellState::default()
+        };
+        terminal.draw(|frame| render(frame, &mut state, theme))?;
+        let rendered = rendered_text(terminal.backend().buffer());
+
+        assert!(rendered.contains("Tests   Ctrl+P Commands"));
+        assert!(!rendered.contains("1 Overview"));
+        assert!(state.hit_regions.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_tab_click_changes_the_active_workspace() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut terminal = Terminal::new(TestBackend::new(140, 40))?;
+        let theme = LazuliTheme::new(ColorCapability::NoColor, GlyphMode::Ascii);
+        let mut state = ShellState::default();
+        terminal.draw(|frame| render(frame, &mut state, theme))?;
+        let logcat = state
+            .hit_regions
+            .iter()
+            .find(|region| region.workspace == WorkspaceId::Logcat)
+            .copied()
+            .ok_or_else(|| std::io::Error::other("Logcat tab was not rendered"))?;
+        let mouse = crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: logcat.area.x,
+            row: logcat.area.y,
+            modifiers: KeyModifiers::NONE,
+        };
+        let profile = TerminalProfile {
+            remote: false,
+            tmux: false,
+            reduced_motion: true,
+            utf8: true,
+        };
+        handle_mouse(&mut state, mouse, &mut None, profile)?;
+
+        assert_eq!(state.active_workspace, WorkspaceId::Logcat);
+        Ok(())
+    }
+
+    fn rendered_text(buffer: &Buffer) -> String {
+        buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
     }
 
     #[test]

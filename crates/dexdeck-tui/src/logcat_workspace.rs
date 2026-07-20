@@ -1,12 +1,12 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use dexdeck_core::{ByteBoundedLogBuffer, CompiledLogFilter, LogFilterSpec, LogViewState};
-use dexdeck_protocol::LogRecord;
+use dexdeck_protocol::{LogRecord, LogTextSearch};
 use ratatui::{
     Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
 };
 
 use crate::LazuliTheme;
@@ -38,6 +38,7 @@ pub enum LogWorkspaceAction {
 pub struct LogcatWorkspace {
     buffer: ByteBoundedLogBuffer,
     filter: CompiledLogFilter,
+    filter_spec: LogFilterSpec,
     view: LogViewState,
     paused_at_sequence: Option<u64>,
     scroll_from_end: usize,
@@ -55,6 +56,7 @@ impl Default for LogcatWorkspace {
         Self {
             buffer: ByteBoundedLogBuffer::default(),
             filter: CompiledLogFilter::default(),
+            filter_spec: LogFilterSpec::default(),
             view: LogViewState {
                 follow: true,
                 ..LogViewState::default()
@@ -88,10 +90,18 @@ impl LogcatWorkspace {
     }
 
     pub fn set_filter(&mut self, spec: LogFilterSpec) -> Result<(), String> {
-        self.filter = CompiledLogFilter::compile(spec).map_err(|error| error.to_string())?;
+        self.filter =
+            CompiledLogFilter::compile(spec.clone()).map_err(|error| error.to_string())?;
+        self.filter_spec = spec;
         self.scroll_from_end = 0;
         self.dirty = true;
         Ok(())
+    }
+
+    pub fn set_text_search(&mut self, query: &str) -> Result<(), String> {
+        let mut spec = self.filter_spec.clone();
+        spec.text_search = (!query.is_empty()).then(|| LogTextSearch::Plain(query.into()));
+        self.set_filter(spec)
     }
 
     pub fn set_status(&mut self, status: impl Into<String>) {
@@ -206,6 +216,11 @@ impl LogcatWorkspace {
 
     pub fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: LazuliTheme) {
         let stats = self.buffer.stats();
+        let separator = if theme.glyphs == crate::GlyphMode::Ascii {
+            "|"
+        } else {
+            "·"
+        };
         let title = format!(
             " Logcat [{}{}] {}{} ",
             if self.device_scope {
@@ -225,13 +240,20 @@ impl LogcatWorkspace {
             },
             if self.recording { " REC" } else { "" },
         );
-        let block = Block::default()
-            .title(title)
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.colors.border));
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-        let height = usize::from(inner.height.saturating_sub(1));
+        let rows = ratatui::layout::Layout::vertical([
+            ratatui::layout::Constraint::Length(2),
+            ratatui::layout::Constraint::Min(0),
+            ratatui::layout::Constraint::Length(1),
+        ])
+        .split(area);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled(title.trim().to_owned(), theme.accent()),
+                Line::styled("/ Search   f Filters   s Scope   p Process", theme.muted()),
+            ]),
+            rows[0],
+        );
+        let height = usize::from(rows[1].height);
         let paused_at = self.paused_at_sequence.unwrap_or(u64::MAX);
         let visible = self
             .buffer
@@ -263,22 +285,17 @@ impl LogcatWorkspace {
                 ])
             })
             .collect::<Vec<_>>();
-        let rows = ratatui::layout::Layout::vertical([
-            ratatui::layout::Constraint::Min(0),
-            ratatui::layout::Constraint::Length(1),
-        ])
-        .split(inner);
-        frame.render_widget(Paragraph::new(lines), rows[0]);
+        frame.render_widget(Paragraph::new(lines), rows[1]);
         frame.render_widget(
             Paragraph::new(format!(
-                "{} | entries {} | bytes {} | dropped {} | / filter  s scope  p process  e export  r record",
+                "{}  {separator}  {} entries  {separator}  {} bytes  {separator}  {} dropped  {separator}  e Export  r Record",
                 self.status,
                 stats.buffered_entries,
                 stats.buffered_bytes,
                 stats.dropped_entries_since_clear,
             ))
-            .style(Style::default().fg(theme.colors.text_muted)),
-            rows[1],
+            .style(theme.muted()),
+            rows[2],
         );
         self.dirty = false;
     }
@@ -345,5 +362,21 @@ mod tests {
         assert_eq!(workspace.buffer.stats().buffered_entries, 0);
         workspace.handle_key(key(KeyCode::End, KeyModifiers::NONE));
         assert!(workspace.view.follow);
+    }
+
+    #[test]
+    fn plain_text_search_filters_without_discarding_records() -> Result<(), String> {
+        let mut workspace = LogcatWorkspace::default();
+        workspace.ingest(vec![record(1), record(2)]);
+        workspace.set_text_search("line 2")?;
+
+        let matches = workspace
+            .buffer
+            .iter()
+            .filter(|entry| workspace.filter.matches(&entry.record))
+            .count();
+        assert_eq!(matches, 1);
+        assert_eq!(workspace.buffer.stats().buffered_entries, 2);
+        Ok(())
     }
 }

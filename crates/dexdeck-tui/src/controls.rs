@@ -2,6 +2,70 @@ use std::{collections::HashMap, ops::Range};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum WorkspaceId {
+    #[default]
+    Overview,
+    Run,
+    Tests,
+    Logcat,
+    Devices,
+    Tasks,
+    Doctor,
+}
+
+impl WorkspaceId {
+    pub const ALL: [Self; 7] = [
+        Self::Overview,
+        Self::Run,
+        Self::Tests,
+        Self::Logcat,
+        Self::Devices,
+        Self::Tasks,
+        Self::Doctor,
+    ];
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::Run => "Run",
+            Self::Tests => "Tests",
+            Self::Logcat => "Logcat",
+            Self::Devices => "Devices",
+            Self::Tasks => "Tasks",
+            Self::Doctor => "Doctor",
+        }
+    }
+
+    #[must_use]
+    pub const fn number(self) -> char {
+        match self {
+            Self::Overview => '1',
+            Self::Run => '2',
+            Self::Tests => '3',
+            Self::Logcat => '4',
+            Self::Devices => '5',
+            Self::Tasks => '6',
+            Self::Doctor => '7',
+        }
+    }
+
+    #[must_use]
+    pub const fn from_number(number: char) -> Option<Self> {
+        match number {
+            '1' => Some(Self::Overview),
+            '2' => Some(Self::Run),
+            '3' => Some(Self::Tests),
+            '4' => Some(Self::Logcat),
+            '5' => Some(Self::Devices),
+            '6' => Some(Self::Tasks),
+            '7' => Some(Self::Doctor),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum NamedAction {
     CommandPalette,
@@ -9,28 +73,30 @@ pub enum NamedAction {
     Search,
     FocusNext,
     FocusPrevious,
-    Dashboard,
+    Overview,
     Run,
     Tests,
     Logcat,
     Devices,
-    Tooling,
+    Tasks,
+    Doctor,
     Quit,
 }
 
 impl NamedAction {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::CommandPalette,
         Self::Help,
         Self::Search,
         Self::FocusNext,
         Self::FocusPrevious,
-        Self::Dashboard,
+        Self::Overview,
         Self::Run,
         Self::Tests,
         Self::Logcat,
         Self::Devices,
-        Self::Tooling,
+        Self::Tasks,
+        Self::Doctor,
         Self::Quit,
     ];
 
@@ -42,12 +108,13 @@ impl NamedAction {
             Self::Search => "Search current view",
             Self::FocusNext => "Focus next pane",
             Self::FocusPrevious => "Focus previous pane",
-            Self::Dashboard => "Open dashboard",
+            Self::Overview => "Open overview",
             Self::Run => "Open run workspace",
             Self::Tests => "Open tests workspace",
             Self::Logcat => "Open Logcat workspace",
             Self::Devices => "Open devices",
-            Self::Tooling => "Open tooling",
+            Self::Tasks => "Open tasks",
+            Self::Doctor => "Open doctor",
             Self::Quit => "Quit",
         }
     }
@@ -189,29 +256,32 @@ impl VirtualList {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum FocusPane {
-    Navigation,
+pub enum FocusRegion {
+    WorkspaceBar,
     #[default]
-    Workspace,
-    Details,
+    Primary,
+    Secondary,
+    Actions,
 }
 
-impl FocusPane {
+impl FocusRegion {
     #[must_use]
     pub const fn next(self) -> Self {
         match self {
-            Self::Navigation => Self::Workspace,
-            Self::Workspace => Self::Details,
-            Self::Details => Self::Navigation,
+            Self::WorkspaceBar => Self::Primary,
+            Self::Primary => Self::Secondary,
+            Self::Secondary => Self::Actions,
+            Self::Actions => Self::WorkspaceBar,
         }
     }
 
     #[must_use]
     pub const fn previous(self) -> Self {
         match self {
-            Self::Navigation => Self::Details,
-            Self::Workspace => Self::Navigation,
-            Self::Details => Self::Workspace,
+            Self::WorkspaceBar => Self::Actions,
+            Self::Primary => Self::WorkspaceBar,
+            Self::Secondary => Self::Primary,
+            Self::Actions => Self::Secondary,
         }
     }
 }

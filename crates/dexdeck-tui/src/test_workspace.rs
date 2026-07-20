@@ -2,9 +2,10 @@ use dexdeck_protocol::{Diagnostic, TestCaseResult, TestOutcome, TestRunResult};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Modifier, Style},
+    style::Style,
     text::Line,
-    widgets::{Block, Borders, Paragraph},
+    text::Span,
+    widgets::{Block, Paragraph},
 };
 
 use crate::LazuliTheme;
@@ -30,9 +31,19 @@ pub struct TestWorkspace {
     pub raw_output: String,
     pub status: String,
     pub dirty: bool,
+    case_rows: Vec<Rect>,
 }
 
 impl TestWorkspace {
+    pub fn handle_click(&mut self, x: u16, y: u16) -> bool {
+        let Some(index) = self.case_rows.iter().position(|area| contains(*area, x, y)) else {
+            return false;
+        };
+        self.selected_case = index;
+        self.dirty = true;
+        true
+    }
+
     pub fn set_result(&mut self, result: TestRunResult) {
         self.runs.push(result);
         self.selected_case = 0;
@@ -90,19 +101,13 @@ impl TestWorkspace {
     }
 
     pub fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: LazuliTheme) {
-        let block = Block::default()
-            .title(" Tests & diagnostics ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.colors.border));
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
         let rows = Layout::vertical([
             Constraint::Length(2),
             Constraint::Percentage(45),
             Constraint::Min(3),
             Constraint::Length(1),
         ])
-        .split(inner);
+        .split(area);
         let summary = self.runs.last().map_or_else(
             || "No test result. Run a local or instrumentation target.".into(),
             |run| {
@@ -115,7 +120,13 @@ impl TestWorkspace {
                 )
             },
         );
-        frame.render_widget(Paragraph::new(summary), rows[0]);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled("Test results", theme.accent()),
+                Line::raw(summary),
+            ]),
+            rows[0],
+        );
         let cases = self
             .runs
             .last()
@@ -124,31 +135,60 @@ impl TestWorkspace {
                     .iter()
                     .enumerate()
                     .map(|(index, case)| {
-                        Line::styled(
-                            format!(
-                                "{} {}::{} ({} ms)",
-                                match case.outcome {
-                                    TestOutcome::Passed => "PASS",
-                                    TestOutcome::Failed => "FAIL",
-                                    TestOutcome::Skipped => "SKIP",
-                                },
-                                case.class,
-                                case.name,
-                                case.duration_ms
-                            ),
-                            if index == self.selected_case {
-                                Style::default()
-                                    .fg(theme.colors.focus)
-                                    .add_modifier(Modifier::BOLD)
+                        let selected = index == self.selected_case;
+                        let marker = if selected {
+                            if theme.glyphs == crate::GlyphMode::Ascii {
+                                ">"
                             } else {
-                                Style::default().fg(theme.colors.text_primary)
-                            },
-                        )
+                                "▌"
+                            }
+                        } else {
+                            " "
+                        };
+                        Line::from(vec![
+                            Span::styled(
+                                format!(
+                                    "{marker} {} ",
+                                    match case.outcome {
+                                        TestOutcome::Passed => "Passed",
+                                        TestOutcome::Failed => "Failed",
+                                        TestOutcome::Skipped => "Skipped",
+                                    }
+                                ),
+                                if selected {
+                                    theme.selected()
+                                } else {
+                                    theme.muted()
+                                },
+                            ),
+                            Span::styled(
+                                format!("{}::{} ({} ms)", case.class, case.name, case.duration_ms),
+                                if selected {
+                                    theme.selected()
+                                } else {
+                                    Style::default().fg(theme.colors.text_primary)
+                                },
+                            ),
+                        ])
                     })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        frame.render_widget(Paragraph::new(cases), rows[1]);
+        let cases_block = Block::new().title(Line::styled("Cases", theme.accent()));
+        let cases_area = cases_block.inner(rows[1]);
+        self.case_rows = (0..cases.len().min(usize::from(cases_area.height)))
+            .map(|index| {
+                Rect::new(
+                    cases_area.x,
+                    cases_area
+                        .y
+                        .saturating_add(u16::try_from(index).unwrap_or(u16::MAX)),
+                    cases_area.width,
+                    1,
+                )
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(cases).block(cases_block), rows[1]);
         let detail = if self.show_raw {
             self.raw_output.clone()
         } else if let Some(case) = self.selected() {
@@ -162,14 +202,24 @@ impl TestWorkspace {
         } else {
             "No failure or diagnostic selected.".into()
         };
-        frame.render_widget(Paragraph::new(detail), rows[2]);
         frame.render_widget(
-            Paragraph::new("j/k select  a all  f failed  r selected  o open  y copy  x raw")
-                .style(Style::default().fg(theme.colors.text_muted)),
+            Paragraph::new(detail)
+                .block(Block::new().title(Line::styled("Details", theme.accent()))),
+            rows[2],
+        );
+        frame.render_widget(
+            Paragraph::new("Up/Down Select case  Ctrl+P Commands").style(theme.muted()),
             rows[3],
         );
         self.dirty = false;
     }
+}
+
+fn contains(area: Rect, x: u16, y: u16) -> bool {
+    x >= area.x
+        && x < area.x.saturating_add(area.width)
+        && y >= area.y
+        && y < area.y.saturating_add(area.height)
 }
 
 #[cfg(test)]

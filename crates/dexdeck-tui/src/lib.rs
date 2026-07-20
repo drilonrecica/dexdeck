@@ -3,6 +3,7 @@
 mod controls;
 mod lifecycle;
 mod logcat_workspace;
+mod overview_workspace;
 mod run_workspace;
 mod shell;
 mod test_workspace;
@@ -10,10 +11,12 @@ mod theme;
 mod tooling_workspace;
 
 pub use controls::{
-    FocusPane, KeyChord, KeyConflict, Keymap, NamedAction, PaletteMatch, VirtualList, fuzzy_actions,
+    FocusRegion, KeyChord, KeyConflict, Keymap, NamedAction, PaletteMatch, VirtualList,
+    WorkspaceId, fuzzy_actions,
 };
 pub use lifecycle::{ActiveAnimation, MAX_ACTIVE_ANIMATION_FRAMES, TerminalProfile};
 pub use logcat_workspace::{LogOverlay, LogWorkspaceAction, LogcatWorkspace};
+pub use overview_workspace::OverviewWorkspace;
 pub use run_workspace::{RUN_HISTORY_LIMIT, RUN_OUTPUT_LIMIT, RunWorkspace, RunWorkspaceAction};
 pub use shell::{
     DashboardLayout, LogcatBackend, LogcatBackendEvent, ShellError, ShellOptions, run,

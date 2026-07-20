@@ -1,6 +1,6 @@
 use std::env;
 
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier, Style};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ColorCapability {
@@ -152,6 +152,45 @@ impl LazuliTheme {
         };
         Self { colors, glyphs }
     }
+
+    #[must_use]
+    pub const fn canvas(self) -> Style {
+        Style::new()
+            .bg(self.colors.background)
+            .fg(self.colors.text_primary)
+    }
+
+    #[must_use]
+    pub const fn surface(self) -> Style {
+        Style::new()
+            .bg(self.colors.surface)
+            .fg(self.colors.text_primary)
+    }
+
+    #[must_use]
+    pub const fn muted(self) -> Style {
+        Style::new().fg(self.colors.text_muted)
+    }
+
+    #[must_use]
+    pub const fn accent(self) -> Style {
+        Style::new()
+            .fg(self.colors.action)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    #[must_use]
+    pub const fn selected(self) -> Style {
+        Style::new()
+            .fg(self.colors.focus)
+            .bg(self.colors.surface)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    #[must_use]
+    pub const fn separator(self) -> Style {
+        Style::new().fg(self.colors.border)
+    }
 }
 
 fn light_background_detected() -> bool {
@@ -184,5 +223,25 @@ mod tests {
         assert_eq!(colors.warning, Color::Reset);
         assert_eq!(colors.error, Color::Reset);
         assert_eq!(colors.info, Color::Reset);
+    }
+
+    #[test]
+    fn selected_rows_use_the_surface_and_focus_tokens() {
+        let theme =
+            LazuliTheme::for_background(ColorCapability::TrueColor, GlyphMode::Unicode, false);
+        let style = theme.selected();
+        assert_eq!(style.bg, Some(theme.colors.surface));
+        assert_eq!(style.fg, Some(theme.colors.focus));
+        assert!(style.add_modifier.contains(ratatui::style::Modifier::BOLD));
+    }
+
+    #[test]
+    fn light_and_dark_true_color_palettes_are_distinct() {
+        let dark =
+            LazuliTheme::for_background(ColorCapability::TrueColor, GlyphMode::Unicode, false);
+        let light =
+            LazuliTheme::for_background(ColorCapability::TrueColor, GlyphMode::Unicode, true);
+        assert_ne!(dark.colors.background, light.colors.background);
+        assert_ne!(dark.colors.text_primary, light.colors.text_primary);
     }
 }

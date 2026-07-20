@@ -4,9 +4,10 @@ use dexdeck_protocol::{Diagnostic, JobRecord, JobState};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Modifier, Style},
+    style::Style,
     text::Line,
-    widgets::{Block, Borders, Paragraph},
+    text::Span,
+    widgets::Paragraph,
 };
 
 use crate::{LazuliTheme, VirtualList};
@@ -44,9 +45,19 @@ pub struct RunWorkspace {
     pub output_bytes: usize,
     pub selected_job: VirtualList,
     pub dirty: bool,
+    job_rows: Vec<Rect>,
 }
 
 impl RunWorkspace {
+    pub fn handle_click(&mut self, x: u16, y: u16) -> bool {
+        let Some(index) = self.job_rows.iter().position(|area| contains(*area, x, y)) else {
+            return false;
+        };
+        self.selected_job.selected = index.min(self.queue.len().saturating_sub(1));
+        self.dirty = true;
+        true
+    }
+
     pub fn set_selection(
         &mut self,
         project: Option<String>,
@@ -130,33 +141,41 @@ impl RunWorkspace {
     }
 
     pub fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: LazuliTheme) {
-        let block = Block::default()
-            .title(" Run & jobs ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.colors.border));
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
         let rows = Layout::vertical([
-            Constraint::Length(3),
+            Constraint::Length(4),
             Constraint::Percentage(35),
             Constraint::Min(3),
             Constraint::Length(1),
         ])
-        .split(inner);
+        .split(area);
+        let separator = if theme.glyphs == crate::GlyphMode::Ascii {
+            "|"
+        } else {
+            "·"
+        };
         frame.render_widget(
-            Paragraph::new(format!(
-                "project: {} | model: {}\nmodule: {} | variant: {} | device: {} | app: {}",
-                self.project.as_deref().unwrap_or("not detected"),
-                if self.model_status.is_empty() {
-                    "unavailable"
-                } else {
-                    &self.model_status
-                },
-                self.module.as_deref().unwrap_or("select"),
-                self.variant.as_deref().unwrap_or("select"),
-                self.device.as_deref().unwrap_or("select"),
-                self.application_id.as_deref().unwrap_or("unresolved")
-            )),
+            Paragraph::new(vec![
+                Line::styled("Target", theme.accent()),
+                Line::from(format!(
+                    "{}  {separator}  {} / {}  {separator}  {}",
+                    self.project.as_deref().unwrap_or("Project not detected"),
+                    self.module.as_deref().unwrap_or("Select module"),
+                    self.variant.as_deref().unwrap_or("Select variant"),
+                    self.device.as_deref().unwrap_or("Select device"),
+                )),
+                Line::styled(
+                    format!(
+                        "Model: {}  {separator}  App: {}",
+                        if self.model_status.is_empty() {
+                            "Unavailable"
+                        } else {
+                            &self.model_status
+                        },
+                        self.application_id.as_deref().unwrap_or("Unresolved")
+                    ),
+                    theme.muted(),
+                ),
+            ]),
             rows[0],
         );
         let jobs = self
@@ -165,27 +184,64 @@ impl RunWorkspace {
             .enumerate()
             .map(|(index, job)| {
                 let state = match job.state {
-                    JobState::Queued => "WAIT",
-                    JobState::Starting => "START",
-                    JobState::Running => "RUN",
-                    JobState::Cancelling => "STOP",
-                    JobState::Succeeded => "OK",
-                    JobState::Failed => "FAIL",
-                    JobState::Cancelled => "CANCEL",
+                    JobState::Queued => "Queued",
+                    JobState::Starting => "Starting",
+                    JobState::Running => "Running",
+                    JobState::Cancelling => "Cancelling",
+                    JobState::Succeeded => "Succeeded",
+                    JobState::Failed => "Failed",
+                    JobState::Cancelled => "Cancelled",
                 };
-                Line::styled(
-                    format!("{state} {:?} {}", job.kind, job.command_summary.join(" ")),
-                    if index == self.selected_job.selected {
-                        Style::default()
-                            .fg(theme.colors.focus)
-                            .add_modifier(Modifier::BOLD)
+                let selected = index == self.selected_job.selected;
+                let marker = if selected {
+                    if theme.glyphs == crate::GlyphMode::Ascii {
+                        ">"
                     } else {
-                        Style::default().fg(theme.colors.text_primary)
-                    },
-                )
+                        "▌"
+                    }
+                } else {
+                    " "
+                };
+                Line::from(vec![
+                    Span::styled(
+                        format!("{marker} {state:<10}"),
+                        if selected {
+                            theme.selected()
+                        } else {
+                            theme.muted()
+                        },
+                    ),
+                    Span::styled(
+                        format!(" {:?}  {}", job.kind, job.command_summary.join(" ")),
+                        if selected {
+                            theme.selected()
+                        } else {
+                            Style::default().fg(theme.colors.text_primary)
+                        },
+                    ),
+                ])
             })
             .collect::<Vec<_>>();
-        frame.render_widget(Paragraph::new(jobs), rows[1]);
+        let jobs_block = ratatui::widgets::Block::new().title(Line::styled("Jobs", theme.accent()));
+        let jobs_area = jobs_block.inner(rows[1]);
+        self.job_rows = (0..jobs.len().min(usize::from(jobs_area.height)))
+            .map(|index| {
+                Rect::new(
+                    jobs_area.x,
+                    jobs_area
+                        .y
+                        .saturating_add(u16::try_from(index).unwrap_or(u16::MAX)),
+                    jobs_area.width,
+                    1,
+                )
+            })
+            .collect();
+        let jobs = if jobs.is_empty() {
+            vec![Line::styled("No active jobs", theme.muted())]
+        } else {
+            jobs
+        };
+        frame.render_widget(Paragraph::new(jobs).block(jobs_block), rows[1]);
         let details = if let Some(diagnostic) = self.diagnostics.last() {
             format!(
                 "{:?}: {}\n{}",
@@ -201,7 +257,7 @@ impl RunWorkspace {
                     .join("\n")
             )
         } else if self.output.is_empty() {
-            "No job output. Choose explicit build, install, launch, or run action.".into()
+            "No job output. Choose Build, Install, Launch, or Run.".into()
         } else {
             self.output
                 .iter()
@@ -212,16 +268,25 @@ impl RunWorkspace {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
-        frame.render_widget(Paragraph::new(details), rows[2]);
         frame.render_widget(
-            Paragraph::new(
-                "m/v/d select  u model  b build  i install  l launch  r run  c cancel  o open",
-            )
-            .style(Style::default().fg(theme.colors.text_muted)),
+            Paragraph::new(details).block(
+                ratatui::widgets::Block::new().title(Line::styled("Output", theme.accent())),
+            ),
+            rows[2],
+        );
+        frame.render_widget(
+            Paragraph::new("Up/Down Select job  Ctrl+P Commands").style(theme.muted()),
             rows[3],
         );
         self.dirty = false;
     }
+}
+
+fn contains(area: Rect, x: u16, y: u16) -> bool {
+    x >= area.x
+        && x < area.x.saturating_add(area.width)
+        && y >= area.y
+        && y < area.y.saturating_add(area.height)
 }
 
 #[cfg(test)]

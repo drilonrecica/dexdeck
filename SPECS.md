@@ -384,7 +384,8 @@ Branding inside the operational TUI must be restrained.
 Recommended header pattern:
 
 ```text
-DEXDECK  shop-android  :app  demoDebug  Pixel_9_API_36
+DexDeck   shop-android
+:app / demoDebug   ·   Pixel_9_API_36
 ```
 
 The `DEXDECK` label may use the primary action color. Project, module, variant, device, job, and model state remain dominant.
@@ -1414,21 +1415,28 @@ The interface should always make important state visible:
 Full layout at approximately 100×30 and larger:
 
 ```text
-┌ DexDeck ─ project ─ module ─ variant ─ device ─ model status ─────────────┐
-│ [Run] [Build] [Test] [Logs] [Devices] [Tasks]                 Ctrl+P Commands│
-├──────────────────────┬───────────────────────────────────────────────────────┤
-│ Navigation           │ Active workspace                                      │
-│ Modules              │ Logcat / Tests / Jobs / Devices / Tasks / Doctor      │
-│ Variants             │                                                       │
-│ Profiles             │                                                       │
-├──────────────────────┼───────────────────────────────────────────────────────┤
-│ Device summary       │ Active jobs                                            │
-├──────────────────────┴───────────────────────────────────────────────────────┤
-│ Context shortcuts • status • warnings • queue                               │
-└───────────────────────────────────────────────────────────────────────────────┘
+ DexDeck   shop-android / :app / demoDebug       ● Pixel 9   Model ready
+ 1 Overview   2 Run   3 Tests   4 Logcat   5 Devices   6 Tasks   7 Doctor
+ ─────────────────────────────────────────────────────────────────────────
+
+ Ready for development
+
+ ▌ Run application                  Active work
+   Build selected variant           No running jobs
+   Run tests
+
+ Project   shop-android              Recent result
+ Target    :app / demoDebug          ✓ 42 tests passed
+ Device    Pixel 9 API 36
+
+ ─────────────────────────────────────────────────────────────────────────
+ Tab Focus   ↑↓ Select   Enter Open   ? Shortcuts                 Ready
 ```
 
 The design should be dense in capability but progressively disclosed visually.
+Normal workspaces MUST use an unframed canvas, whitespace, section headings,
+and sparse horizontal separators. Full rectangular borders are reserved for
+temporary overlays such as commands, help, search, and confirmation prompts.
 
 ### 15.3 Responsive behavior
 
@@ -1457,16 +1465,16 @@ Version 0.2.0 should include:
 Neutral default bindings:
 
 ```text
-Arrow keys / Tab     Navigate
+1–7                  Switch primary workspace
+Tab / Shift+Tab      Move focus
+Arrow keys           Move within the focused control
 Enter                Select / open / confirm
-Esc                  Close overlay / return
+Space                Toggle the focused state
+Esc                  Close overlay / return; never quit the normal screen
 Ctrl+P               Command palette
-Ctrl+R               Run selected profile or current target
-Ctrl+B               Build
-Ctrl+T               Test
-Ctrl+L               Focus Logcat
 ?                    Contextual help
 /                    Search in active workspace where applicable
+q / Ctrl+C           Request safe exit
 ```
 
 An optional Vim preset adds:
@@ -1541,6 +1549,9 @@ The core workspace should be restrained, technical, professional, and recognizab
 Use:
 
 - Lazuli semantic theme tokens
+- Sentence-case labels, muted supporting text, and a restrained accent hierarchy
+- Surface color only for selected rows, focused controls, and overlays
+- `▌` selected-row markers with `>` ASCII fallbacks
 - Sparse Deckmark usage in empty states, documentation, and the application identity area
 - Angular layered geometry where decoration is appropriate
 - Clear focus, job, diagnostic, and model-freshness states
@@ -1548,6 +1559,9 @@ Use:
 
 Avoid:
 
+- Nested or persistent four-sided panel borders
+- Bracketed pseudo-buttons and dense uppercase status blocks
+- Shortcut walls when contextual help can disclose the same actions
 - Fake hacker aesthetics
 - Permanent giant ASCII logos
 - Excessive animation

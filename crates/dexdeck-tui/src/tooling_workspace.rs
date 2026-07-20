@@ -4,7 +4,8 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::Line,
-    widgets::{Block, Borders, Paragraph},
+    text::Span,
+    widgets::{Block, Paragraph},
 };
 
 use crate::{LazuliTheme, VirtualList};
@@ -50,9 +51,34 @@ pub struct ToolingWorkspace {
     pub search: String,
     pub list: VirtualList,
     pub dirty: bool,
+    row_regions: Vec<(usize, Rect)>,
+    subview_regions: Vec<(ToolingTab, Rect)>,
 }
 
 impl ToolingWorkspace {
+    pub fn handle_click(&mut self, x: u16, y: u16) -> bool {
+        if let Some(tab) = self
+            .subview_regions
+            .iter()
+            .find(|(_, area)| contains(*area, x, y))
+            .map(|(tab, _)| *tab)
+        {
+            self.set_tab(tab);
+            return true;
+        }
+        let Some(index) = self
+            .row_regions
+            .iter()
+            .find(|(_, area)| contains(*area, x, y))
+            .map(|(index, _)| *index)
+        else {
+            return false;
+        };
+        self.list.selected = index;
+        self.dirty = true;
+        true
+    }
+
     pub fn set_tab(&mut self, tab: ToolingTab) {
         self.tab = tab;
         self.list = VirtualList::default();
@@ -63,6 +89,16 @@ impl ToolingWorkspace {
         self.search = search.into();
         self.list = VirtualList::default();
         self.dirty = true;
+    }
+
+    pub fn move_subview(&mut self, _forward: bool) {
+        self.set_tab(match self.tab {
+            ToolingTab::Devices => ToolingTab::Emulators,
+            ToolingTab::Emulators => ToolingTab::Devices,
+            ToolingTab::GradleTasks => ToolingTab::Commands,
+            ToolingTab::Commands => ToolingTab::GradleTasks,
+            ToolingTab::Doctor => ToolingTab::Doctor,
+        });
     }
 
     pub fn handle_key(&mut self, key: char) -> ToolingAction {
@@ -154,33 +190,94 @@ impl ToolingWorkspace {
     }
 
     pub fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: LazuliTheme) {
-        let block = Block::default()
-            .title(" Devices & tooling ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.colors.border));
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
         let rows = Layout::vertical([
             Constraint::Length(2),
             Constraint::Min(3),
             Constraint::Length(1),
         ])
-        .split(inner);
+        .split(area);
+        let subviews: &[(ToolingTab, &str)] = match self.tab {
+            ToolingTab::Devices | ToolingTab::Emulators => &[
+                (ToolingTab::Devices, "Devices"),
+                (ToolingTab::Emulators, "Emulators"),
+            ],
+            ToolingTab::GradleTasks | ToolingTab::Commands => &[
+                (ToolingTab::GradleTasks, "Gradle tasks"),
+                (ToolingTab::Commands, "Commands"),
+            ],
+            ToolingTab::Doctor => &[(ToolingTab::Doctor, "Environment checks")],
+        };
+        self.subview_regions.clear();
+        let mut x = rows[0].x;
+        let heading = Line::from(
+            subviews
+                .iter()
+                .flat_map(|(tab, label)| {
+                    let width = u16::try_from(label.len()).unwrap_or(u16::MAX);
+                    self.subview_regions
+                        .push((*tab, Rect::new(x, rows[0].y, width, 1)));
+                    x = x.saturating_add(width).saturating_add(3);
+                    [
+                        Span::styled(
+                            *label,
+                            if *tab == self.tab {
+                                theme.accent().add_modifier(Modifier::UNDERLINED)
+                            } else {
+                                theme.muted()
+                            },
+                        ),
+                        Span::raw("   "),
+                    ]
+                })
+                .collect::<Vec<_>>(),
+        );
         frame.render_widget(
-            Paragraph::new(format!(
-                "1 Devices  2 Emulators  3 Gradle tasks  4 Commands  5 Doctor\nview: {:?} | search: {}",
-                self.tab,
-                if self.search.is_empty() { "none" } else { &self.search }
-            )),
+            Paragraph::new(vec![
+                heading,
+                Line::styled(
+                    if self.search.is_empty() {
+                        "No active filter".into()
+                    } else {
+                        format!("Filter: {}", self.search)
+                    },
+                    theme.muted(),
+                ),
+            ]),
             rows[0],
         );
         let lines = self.lines(theme);
         let viewport = usize::from(rows[1].height);
         let visible = self.list.visible(lines.len(), viewport);
-        frame.render_widget(Paragraph::new(lines[visible].to_vec()), rows[1]);
+        self.row_regions = visible
+            .clone()
+            .enumerate()
+            .map(|(row, index)| {
+                (
+                    index,
+                    Rect::new(
+                        rows[1].x,
+                        rows[1]
+                            .y
+                            .saturating_add(u16::try_from(row).unwrap_or(u16::MAX)),
+                        rows[1].width,
+                        1,
+                    ),
+                )
+            })
+            .collect();
+        let visible_lines = if lines.is_empty() {
+            vec![Line::styled("No items available", theme.muted())]
+        } else {
+            lines[visible].to_vec()
+        };
+        frame.render_widget(Paragraph::new(visible_lines).block(Block::new()), rows[1]);
         frame.render_widget(
-            Paragraph::new("j/k select  r refresh  s select/start  c cold boot  x stop  e execute")
-                .style(Style::default().fg(theme.colors.text_muted)),
+            Paragraph::new(if theme.glyphs == crate::GlyphMode::Ascii {
+                "Left/Right View  / Search  Ctrl+P Commands"
+            } else {
+                "←/→ View  / Search  Ctrl+P Commands"
+            })
+            .style(theme.muted()),
             rows[2],
         );
         self.dirty = false;
@@ -275,17 +372,42 @@ impl ToolingWorkspace {
             .into_iter()
             .enumerate()
             .map(|(index, entry)| {
-                Line::styled(
-                    entry,
-                    if index == self.list.selected {
-                        Style::default()
-                            .fg(theme.colors.focus)
-                            .add_modifier(Modifier::BOLD)
+                let selected = index == self.list.selected;
+                let marker = if selected {
+                    if theme.glyphs == crate::GlyphMode::Ascii {
+                        ">"
                     } else {
-                        Style::default().fg(theme.colors.text_primary)
-                    },
-                )
+                        "▌"
+                    }
+                } else {
+                    " "
+                };
+                Line::from(vec![
+                    Span::styled(
+                        format!("{marker} "),
+                        if selected {
+                            theme.selected()
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                    Span::styled(
+                        entry,
+                        if selected {
+                            theme.selected()
+                        } else {
+                            Style::default().fg(theme.colors.text_primary)
+                        },
+                    ),
+                ])
             })
             .collect()
     }
+}
+
+fn contains(area: Rect, x: u16, y: u16) -> bool {
+    x >= area.x
+        && x < area.x.saturating_add(area.width)
+        && y >= area.y
+        && y < area.y.saturating_add(area.height)
 }

@@ -457,6 +457,15 @@ structured, rerunnable, and source-addressable in CLI and TUI.
   animation, SSH/tmux fallbacks, and layout/event snapshots.
 - Commit: "feat(tui): finalize session lifecycle"
 
+### F6.7 Modernize the operational TUI — P1/High ✅
+
+- Replace the nested boxed dashboard with the border-light Lazuli canvas,
+  seven-workspace top navigation, contextual footer, selectable overlays, and
+  consistent keyboard and mouse interaction.
+- Preserve terminal capability fallbacks and display unavailable service-backed
+  actions honestly until their runtime adapters are connected.
+- Commit: "feat(tui): modernize visual hierarchy"
+
 **Phase gate:** all core operations are accessible through the TUI; remote and
 compact terminals work; exit restores state without stopping external tools.
 
