@@ -1,4 +1,4 @@
-# Known limitations in 0.2.1
+# Known limitations in 0.2.2
 
 - Windows x86-64 is experimental; terminal, path, wrapper, and Job Object
   behavior is compiled and tested but has less field exposure than Linux/macOS.

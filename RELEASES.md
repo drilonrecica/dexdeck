@@ -2,7 +2,27 @@
 
 ## Unreleased
 
-No changes after 0.2.1.
+No changes after 0.2.2.
+
+## 0.2.2 — 2026-07-20
+
+DexDeck 0.2.2 fixes project modeling for large or metadata-rich Android builds
+whose valid bridge output used JSON escaping different from Rust's serializer.
+
+### Fixed
+
+- Hash the exact emitted Gradle bridge records instead of independently
+  serialized Java and Rust project models, preventing false `model hash
+  mismatch` failures while retaining output-integrity validation.
+- Add real AGP regression coverage for Unicode task metadata across the
+  supported AGP 8 and 9 compatibility lanes.
+- Support the Bash 3.2 environment used by macOS package-smoke runners.
+
+### Compatibility
+
+The bridge wire shape and schema remain at version 1. Its content-addressed
+cache changes automatically, so users do not need to clear existing caches.
+Windows x86-64 remains experimental.
 
 ## 0.2.1 — 2026-07-20
 

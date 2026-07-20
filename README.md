@@ -14,7 +14,7 @@ the same bounded, event-driven core.
 
 ## Install
 
-Version 0.2.1 release archives target Linux x86-64/aarch64, macOS x86-64/Apple
+Version 0.2.2 release archives target Linux x86-64/aarch64, macOS x86-64/Apple
 Silicon, and experimental Windows x86-64. Until artifacts are published, build
 from a checkout with Rust 1.97:
 

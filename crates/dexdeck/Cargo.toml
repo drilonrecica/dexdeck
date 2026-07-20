@@ -14,12 +14,12 @@ dist = true
 
 [dependencies]
 clap.workspace = true
-dexdeck-android = { version = "0.2.1", path = "../dexdeck-android" }
-dexdeck-config = { version = "0.2.1", path = "../dexdeck-config" }
-dexdeck-core = { version = "0.2.1", path = "../dexdeck-core" }
-dexdeck-gradle = { version = "0.2.1", path = "../dexdeck-gradle" }
-dexdeck-protocol = { version = "0.2.1", path = "../dexdeck-protocol" }
-dexdeck-tui = { version = "0.2.1", path = "../dexdeck-tui" }
+dexdeck-android = { version = "0.2.2", path = "../dexdeck-android" }
+dexdeck-config = { version = "0.2.2", path = "../dexdeck-config" }
+dexdeck-core = { version = "0.2.2", path = "../dexdeck-core" }
+dexdeck-gradle = { version = "0.2.2", path = "../dexdeck-gradle" }
+dexdeck-protocol = { version = "0.2.2", path = "../dexdeck-protocol" }
+dexdeck-tui = { version = "0.2.2", path = "../dexdeck-tui" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

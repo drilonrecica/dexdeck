@@ -17,12 +17,12 @@ Download the archive matching the host from the GitHub release. Download
 
 ```sh
 sha256sum --check SHA256SUMS
-tar -xzf dexdeck-0.2.1-x86_64-unknown-linux-gnu.tar.gz
-install -m 755 dexdeck-0.2.1-x86_64-unknown-linux-gnu/dexdeck ~/.local/bin/
+tar -xzf dexdeck-0.2.2-x86_64-unknown-linux-gnu.tar.gz
+install -m 755 dexdeck-0.2.2-x86_64-unknown-linux-gnu/dexdeck ~/.local/bin/
 ```
 
 On Windows use `Get-FileHash -Algorithm SHA256`, extract the ZIP, and place
-`dexdeck.exe` on `PATH`. Windows support is experimental in 0.2.1.
+`dexdeck.exe` on `PATH`. Windows support is experimental in 0.2.2.
 
 The POSIX and PowerShell installers download only from the project’s GitHub
 release and verify the published checksum before installation. Review scripts
