@@ -38,6 +38,7 @@ fn main() -> ExitCode {
         &redactor,
     );
     let shell_options = cli.shell_options();
+    let mut shell_project = cli.shell_project_backend();
     let mut shell_logcat = cli.shell_logcat_backend();
     let debug_log = cli.debug_log_path().map(Path::to_path_buf);
     let mut stdout = io::stdout().lock();
@@ -50,7 +51,7 @@ fn main() -> ExitCode {
     let (code, detail) = if code != DexdeckExitCode::Success {
         (code, None)
     } else if let Some(options) = shell_options {
-        match dexdeck_tui::run_with_logcat(options, shell_logcat.take()) {
+        match dexdeck_tui::run_with_backends(options, shell_project.take(), shell_logcat.take()) {
             Ok(()) => (DexdeckExitCode::Success, None),
             Err(error) => {
                 let message = error.to_string();

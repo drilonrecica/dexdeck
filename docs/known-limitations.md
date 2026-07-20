@@ -9,9 +9,10 @@
   profiler, manifest-merger UI, or SARIF dashboard is included.
 - Crates.io publication is intentionally deferred; use archives, Homebrew, or a
   source checkout.
-- Run, test, device, task, and doctor actions are visible in the redesigned TUI
-  but remain unavailable until their application-service adapters are connected;
-  use the equivalent CLI commands for those operations.
+- Project detection, cached model freshness, automatic model refresh, and Gradle
+  task discovery are connected to the TUI. Run, test, device, task execution,
+  and doctor actions remain unavailable until their application-service adapters
+  are connected; use the equivalent CLI commands for those operations.
 - DexDeck does not install SDK components, Java, Gradle, project dependencies,
   or emulator images during normal product operation.
 

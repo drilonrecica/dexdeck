@@ -17,8 +17,9 @@ use dexdeck_android::{
     InstallOptions, LogProcessSelector, LogcatRequest, LogcatService, SdkResolution, SdkResolver,
 };
 use dexdeck_config::{
-    ConfigLayer, ConfigLoader, ConfigSources, GradleConfig, LogScope, ProjectIdentity,
-    ProjectPaths, RecoveredFile, ResolvedConfig, StoragePaths, load_log_filters, save_log_filters,
+    ConfigLayer, ConfigLoader, ConfigSources, DEFAULT_MODEL_DEBOUNCE, GradleConfig, LogScope,
+    ModelWatchState, ProjectIdentity, ProjectPaths, RecoveredFile, ResolvedConfig, StoragePaths,
+    WatchDecision, load_log_filters, save_log_filters,
 };
 use dexdeck_core::{
     ByteBoundedLogBuffer, CompiledLogFilter, CustomCommandService, LogExportFormat, LogRecorder,
@@ -36,7 +37,9 @@ use dexdeck_protocol::{
     LogTextSearch, ModuleVariant, ModulesSnapshot, OperationContext, OperationError, ProjectModel,
     ProjectSnapshot, SavedLogFilterPreset, VariantsSnapshot,
 };
-use dexdeck_tui::{LogcatBackend, LogcatBackendEvent, ShellOptions};
+use dexdeck_tui::{
+    LogcatBackend, LogcatBackendEvent, ProjectBackend, ProjectBackendEvent, ShellOptions,
+};
 use serde::Serialize;
 
 #[derive(Parser)]
@@ -115,6 +118,17 @@ impl Cli {
     }
 
     #[must_use]
+    pub fn shell_project_backend(&self) -> Option<Box<dyn ProjectBackend>> {
+        self.command.is_none().then(|| {
+            Box::new(ShellProjectBackend::new(ShellProjectContext {
+                project: self.project.clone(),
+                config: self.config.clone(),
+                gradle_arguments: self.gradle_arg.clone(),
+            })) as Box<dyn ProjectBackend>
+        })
+    }
+
+    #[must_use]
     pub fn shell_logcat_backend(&self) -> Option<Box<dyn LogcatBackend>> {
         self.command.is_none().then(|| {
             Box::new(ShellLogcatBackend::new(ShellLogcatContext {
@@ -128,6 +142,298 @@ impl Cli {
             })) as Box<dyn LogcatBackend>
         })
     }
+}
+
+#[derive(Clone, Debug)]
+struct ShellProjectContext {
+    project: Option<std::path::PathBuf>,
+    config: Option<std::path::PathBuf>,
+    gradle_arguments: Vec<String>,
+}
+
+#[derive(Debug)]
+struct ShellProjectBackend {
+    context: ShellProjectContext,
+    events_tx: std::sync::mpsc::SyncSender<ProjectBackendEvent>,
+    events_rx: std::sync::mpsc::Receiver<ProjectBackendEvent>,
+    cancel: Option<tokio_util::sync::CancellationToken>,
+    force_cancel: Option<tokio_util::sync::CancellationToken>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ShellProjectBackend {
+    fn new(context: ShellProjectContext) -> Self {
+        let (events_tx, events_rx) = std::sync::mpsc::sync_channel(16);
+        Self {
+            context,
+            events_tx,
+            events_rx,
+            cancel: None,
+            force_cancel: None,
+            worker: None,
+        }
+    }
+
+    fn shutdown(&mut self) {
+        if let Some(cancel) = self.cancel.take() {
+            cancel.cancel();
+        }
+        if let Some(force_cancel) = self.force_cancel.take() {
+            force_cancel.cancel();
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl ProjectBackend for ShellProjectBackend {
+    fn start(&mut self) -> Result<(), String> {
+        if self.worker.is_some() {
+            return Ok(());
+        }
+        let context = self.context.clone();
+        let events = self.events_tx.clone();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let force_cancel = tokio_util::sync::CancellationToken::new();
+        self.cancel = Some(cancel.clone());
+        self.force_cancel = Some(force_cancel.clone());
+        self.worker = Some(
+            std::thread::Builder::new()
+                .name("dexdeck-project-model".into())
+                .spawn(move || shell_project_worker(context, events, cancel, force_cancel))
+                .map_err(|error| error.to_string())?,
+        );
+        Ok(())
+    }
+
+    fn try_recv(&mut self) -> Option<ProjectBackendEvent> {
+        self.events_rx.try_recv().ok()
+    }
+
+    fn stop(&mut self) {
+        self.shutdown();
+    }
+}
+
+impl Drop for ShellProjectBackend {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+fn shell_project_worker(
+    context: ShellProjectContext,
+    events: std::sync::mpsc::SyncSender<ProjectBackendEvent>,
+    cancel: tokio_util::sync::CancellationToken,
+    force_cancel: tokio_util::sync::CancellationToken,
+) {
+    let redactor = SecretRedactor::new();
+    let start = match context
+        .project
+        .clone()
+        .map_or_else(std::env::current_dir, Ok)
+    {
+        Ok(start) => start,
+        Err(error) => {
+            send_project_error(&events, None, &redactor, error);
+            return;
+        }
+    };
+    let storage = match StoragePaths::discover() {
+        Ok(storage) => storage,
+        Err(error) => {
+            send_project_error(&events, None, &redactor, error);
+            return;
+        }
+    };
+    let discovery = match discover_project(&start, context.project.is_some()) {
+        Ok(discovery) => discovery,
+        Err(error) => {
+            send_project_error(&events, None, &redactor, error);
+            return;
+        }
+    };
+    let root = discovery.root.clone();
+    let _ = events.try_send(ProjectBackendEvent::Detected {
+        root: root.clone(),
+        wrapper_found: discovery.wrapper.is_some(),
+    });
+    let identity = match ProjectIdentity::from_path(&root) {
+        Ok(identity) => identity,
+        Err(error) => {
+            send_project_error(&events, Some(root), &redactor, error);
+            return;
+        }
+    };
+    let project_paths = storage.project(&identity);
+    let cli_layer = (!context.gradle_arguments.is_empty()).then(|| ConfigLayer {
+        gradle: GradleConfig {
+            arguments: Some(context.gradle_arguments),
+        },
+        ..ConfigLayer::default()
+    });
+    if let Err(error) = ConfigLoader.load(&ConfigSources {
+        shared: Some(root.join(".dexdeck/config.toml")),
+        user: Some(project_paths.user_config),
+        explicit: context.config,
+        cli: cli_layer,
+        ..ConfigSources::default()
+    }) {
+        send_project_error(&events, Some(root), &redactor, error);
+        return;
+    }
+    let service = ProjectModelService::new(
+        Arc::new(BridgeRunner::new(
+            storage.bridge_cache_root(),
+            ProcessSupervisor::default(),
+        )),
+        Arc::new(FileProjectModelCache::new(storage)),
+        Arc::new(WatchingModelInputRegistrar::default()),
+    );
+    let mut state = match service.open(&root, true) {
+        Ok(state) => state,
+        Err(error) => {
+            send_project_error(&events, Some(root), &redactor, error);
+            return;
+        }
+    };
+    send_project_state(&events, &state);
+
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            send_project_error(&events, Some(root), &redactor, error);
+            return;
+        }
+    };
+    runtime.block_on(async move {
+        if state.freshness != dexdeck_protocol::ModelFreshness::Current {
+            match service
+                .refresh(cancel.clone(), force_cancel.clone(), &redactor)
+                .await
+            {
+                Ok(refreshed) => state = refreshed,
+                Err(error) => {
+                    if cancel.is_cancelled() || force_cancel.is_cancelled() {
+                        return;
+                    }
+                    state = match service.state() {
+                        Ok(state) => state,
+                        Err(state_error) => {
+                            send_project_error(&events, Some(root), &redactor, state_error);
+                            return;
+                        }
+                    };
+                    if state.model.is_none() {
+                        send_project_error(&events, Some(root), &redactor, error);
+                        return;
+                    }
+                }
+            }
+            send_project_state(&events, &state);
+        }
+
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut watch = ModelWatchState::new(DEFAULT_MODEL_DEBOUNCE);
+        let mut generation = state.generation;
+        loop {
+            tokio::select! {
+                () = cancel.cancelled() => break,
+                () = force_cancel.cancelled() => break,
+                _ = interval.tick() => {
+                    let polled = match service.poll_watcher() {
+                        Ok(polled) => polled,
+                        Err(error) => {
+                            send_project_error(&events, Some(root.clone()), &redactor, error);
+                            break;
+                        }
+                    };
+                    let now = std::time::Instant::now();
+                    if polled.generation != generation {
+                        generation = polled.generation;
+                        state = polled;
+                        send_project_state(&events, &state);
+                        let _ = watch.mark_changed(now);
+                    }
+                    if watch.poll(now, false) == WatchDecision::Refresh {
+                        match service
+                            .refresh(cancel.clone(), force_cancel.clone(), &redactor)
+                            .await
+                        {
+                            Ok(refreshed) => state = refreshed,
+                            Err(error) => {
+                                if cancel.is_cancelled() || force_cancel.is_cancelled() {
+                                    break;
+                                }
+                                state = match service.state() {
+                                    Ok(state) => state,
+                                    Err(state_error) => {
+                                        send_project_error(
+                                            &events,
+                                            Some(root.clone()),
+                                            &redactor,
+                                            state_error,
+                                        );
+                                        break;
+                                    }
+                                };
+                                if state.model.is_none() {
+                                    send_project_error(
+                                        &events,
+                                        Some(root.clone()),
+                                        &redactor,
+                                        error,
+                                    );
+                                }
+                            }
+                        }
+                        generation = state.generation;
+                        send_project_state(&events, &state);
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn send_project_state(
+    events: &std::sync::mpsc::SyncSender<ProjectBackendEvent>,
+    state: &dexdeck_gradle::ProjectModelState,
+) {
+    let Some(mut model) = state.model.clone() else {
+        return;
+    };
+    model
+        .modules
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    for module in &mut model.modules {
+        module
+            .variants
+            .sort_by(|left, right| left.name.cmp(&right.name));
+    }
+    model
+        .tasks
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    let _ = events.try_send(ProjectBackendEvent::Model(Box::new(ProjectSnapshot {
+        freshness: state.freshness,
+        support: state.support,
+        degraded_reason: state.degraded_reason.clone(),
+        project: model,
+    })));
+}
+
+fn send_project_error(
+    events: &std::sync::mpsc::SyncSender<ProjectBackendEvent>,
+    root: Option<std::path::PathBuf>,
+    redactor: &SecretRedactor,
+    error: impl std::fmt::Display,
+) {
+    let _ = events.try_send(ProjectBackendEvent::Error {
+        root,
+        message: redactor.redact_text(&error.to_string()),
+    });
 }
 
 #[derive(Clone, Debug)]
@@ -2977,6 +3283,78 @@ mod tests {
         assert_eq!(code, DexdeckExitCode::InvalidUsage);
         assert!(stdout.is_empty());
         assert!(!stderr.is_empty());
+    }
+
+    #[test]
+    fn shell_project_backend_reports_discovery_failure_and_stops() {
+        let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+        let mut backend = ShellProjectBackend::new(ShellProjectContext {
+            project: Some(temp.path().to_path_buf()),
+            config: None,
+            gradle_arguments: vec![],
+        });
+        backend
+            .start()
+            .unwrap_or_else(|error| panic!("backend start: {error}"));
+        let event = backend
+            .events_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap_or_else(|error| panic!("project event: {error}"));
+        assert!(matches!(
+            event,
+            ProjectBackendEvent::Error {
+                root: None,
+                message: _
+            }
+        ));
+        backend.stop();
+        assert!(backend.worker.is_none());
+    }
+
+    #[test]
+    fn shell_project_backend_finishes_missing_wrapper_detection() {
+        let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+        std::fs::write(
+            temp.path().join("settings.gradle.kts"),
+            "rootProject.name = \"fixture\"\n",
+        )
+        .unwrap_or_else(|error| panic!("settings fixture: {error}"));
+        std::fs::write(
+            temp.path().join("build.gradle.kts"),
+            "plugins { id(\"com.android.application\") }\n",
+        )
+        .unwrap_or_else(|error| panic!("build fixture: {error}"));
+        let mut backend = ShellProjectBackend::new(ShellProjectContext {
+            project: Some(temp.path().to_path_buf()),
+            config: None,
+            gradle_arguments: vec![],
+        });
+        backend
+            .start()
+            .unwrap_or_else(|error| panic!("backend start: {error}"));
+        let detected = backend
+            .events_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap_or_else(|error| panic!("detection event: {error}"));
+        assert!(matches!(
+            detected,
+            ProjectBackendEvent::Detected {
+                wrapper_found: false,
+                ..
+            }
+        ));
+        let completed = backend
+            .events_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap_or_else(|error| panic!("completion event: {error}"));
+        assert!(matches!(
+            completed,
+            ProjectBackendEvent::Error {
+                root: Some(_),
+                message: _
+            }
+        ));
+        backend.stop();
     }
 
     #[test]

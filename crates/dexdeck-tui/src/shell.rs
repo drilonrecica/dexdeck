@@ -1,6 +1,7 @@
 use std::{
     io::{self, Stdout, Write},
     panic,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -24,7 +25,9 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
-use dexdeck_protocol::LogRecord;
+use dexdeck_protocol::{
+    DegradedReason, LogRecord, ModelFreshness, ProjectSnapshot, ProjectSupport,
+};
 
 use crate::{
     ActiveAnimation, ColorCapability, FocusRegion, GlyphMode, LazuliTheme, LogOverlay,
@@ -70,6 +73,27 @@ const ASCII_BORDER: border::Set = border::Set {
 };
 
 const MAX_LOG_NOTIFICATIONS_PER_TICK: usize = 8;
+const MAX_PROJECT_NOTIFICATIONS_PER_TICK: usize = 4;
+
+#[derive(Clone, Debug)]
+pub enum ProjectBackendEvent {
+    Detected {
+        root: PathBuf,
+        wrapper_found: bool,
+    },
+    Model(Box<ProjectSnapshot>),
+    Error {
+        root: Option<PathBuf>,
+        message: String,
+    },
+}
+
+pub trait ProjectBackend: Send {
+    fn start(&mut self) -> Result<(), String>;
+    fn try_recv(&mut self) -> Option<ProjectBackendEvent>;
+    /// Stops only project discovery or refresh work owned by this shell.
+    fn stop(&mut self);
+}
 
 #[derive(Clone, Debug)]
 pub enum LogcatBackendEvent {
@@ -110,6 +134,8 @@ struct ShellState {
     input_count: u64,
     last_size: Option<(u16, u16)>,
     active_workspace: WorkspaceId,
+    project_name: Option<String>,
+    project_phase: ProjectPhase,
     logcat_started: bool,
     overview: OverviewWorkspace,
     logcat: LogcatWorkspace,
@@ -125,6 +151,15 @@ struct ShellState {
     hit_regions: Vec<HitRegion>,
     dirty: bool,
     animation: ActiveAnimation,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ProjectPhase {
+    #[default]
+    Detecting,
+    Detected,
+    Available,
+    Unavailable,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -143,11 +178,19 @@ enum ControlOverlay {
 }
 
 pub fn run(options: ShellOptions) -> Result<(), ShellError> {
-    run_with_logcat(options, None)
+    run_with_backends(options, None, None)
 }
 
 pub fn run_with_logcat(
     options: ShellOptions,
+    logcat: Option<Box<dyn LogcatBackend>>,
+) -> Result<(), ShellError> {
+    run_with_backends(options, None, logcat)
+}
+
+pub fn run_with_backends(
+    options: ShellOptions,
+    mut project: Option<Box<dyn ProjectBackend>>,
     mut logcat: Option<Box<dyn LogcatBackend>>,
 ) -> Result<(), ShellError> {
     let profile = TerminalProfile::detect();
@@ -160,7 +203,16 @@ pub fn run_with_logcat(
     if std::env::var_os("DEXDECK_INTERNAL_TEST_PANIC_AFTER_ENTER").is_some() {
         panic!("injected terminal restoration test panic");
     }
-    let result = run_loop(session.terminal_mut(), theme, profile, &mut logcat);
+    let result = run_loop(
+        session.terminal_mut(),
+        theme,
+        profile,
+        &mut project,
+        &mut logcat,
+    );
+    if let Some(project) = &mut project {
+        project.stop();
+    }
     if let Some(logcat) = &mut logcat {
         logcat.stop();
     }
@@ -171,12 +223,31 @@ fn run_loop<B: Backend>(
     terminal: &mut Terminal<B>,
     theme: LazuliTheme,
     profile: TerminalProfile,
+    project: &mut Option<Box<dyn ProjectBackend>>,
     backend: &mut Option<Box<dyn LogcatBackend>>,
 ) -> Result<(), ShellError> {
     let mut state = ShellState::default();
+    if let Some(project) = project.as_deref_mut() {
+        if let Err(error) = project.start() {
+            apply_project_event(
+                &mut state,
+                ProjectBackendEvent::Error {
+                    root: None,
+                    message: error,
+                },
+            );
+        }
+    } else {
+        state.project_phase = ProjectPhase::Unavailable;
+        state.overview.model_status = "Project detection unavailable".into();
+        state.run.model_status = state.overview.model_status.clone();
+    }
     terminal.draw(|frame| render(frame, &mut state, theme))?;
     let mut last_draw = Instant::now();
     loop {
+        if let Some(project) = project.as_deref_mut() {
+            drain_project_notifications(&mut state, project);
+        }
         if state.active_workspace == WorkspaceId::Logcat
             && let Some(backend) = backend.as_deref_mut()
         {
@@ -719,6 +790,142 @@ fn drain_logcat_notifications(state: &mut ShellState, backend: &mut dyn LogcatBa
     drained
 }
 
+fn drain_project_notifications(state: &mut ShellState, backend: &mut dyn ProjectBackend) -> usize {
+    let mut drained = 0;
+    for _ in 0..MAX_PROJECT_NOTIFICATIONS_PER_TICK {
+        let Some(notification) = backend.try_recv() else {
+            break;
+        };
+        drained += 1;
+        apply_project_event(state, notification);
+    }
+    drained
+}
+
+fn apply_project_event(state: &mut ShellState, event: ProjectBackendEvent) {
+    match event {
+        ProjectBackendEvent::Detected {
+            root,
+            wrapper_found,
+        } => {
+            set_project_identity(state, &root);
+            state.project_phase = ProjectPhase::Detected;
+            state.overview.model_status = if wrapper_found {
+                "Project detected · Loading project model".into()
+            } else {
+                "Project detected · Gradle wrapper missing".into()
+            };
+            state.run.model_status = state.overview.model_status.clone();
+        }
+        ProjectBackendEvent::Model(snapshot) => {
+            let snapshot = *snapshot;
+            set_project_identity(state, &snapshot.project.root);
+            state.project_phase = ProjectPhase::Available;
+            let module_count = snapshot.project.modules.len();
+            state.tooling.tasks = snapshot.project.tasks;
+            state.overview.model_status = project_model_status(
+                snapshot.freshness,
+                snapshot.support,
+                snapshot.degraded_reason.as_ref(),
+                module_count,
+            );
+            state.run.model_status = state.overview.model_status.clone();
+        }
+        ProjectBackendEvent::Error { root, message } => {
+            let model_usable = state.project_phase == ProjectPhase::Available && root.is_some();
+            if let Some(root) = root {
+                set_project_identity(state, &root);
+                state.overview.model_status = if model_usable {
+                    format!("Project refresh unavailable · Using cached model: {message}")
+                } else {
+                    format!("Project model unavailable: {message}")
+                };
+            } else {
+                state.project_name = None;
+                state.overview.project = None;
+                state.run.project = None;
+                state.overview.model_status = format!("No Android Gradle project: {message}");
+            }
+            state.project_phase = if model_usable {
+                ProjectPhase::Available
+            } else {
+                ProjectPhase::Unavailable
+            };
+            state.run.model_status = state.overview.model_status.clone();
+            if !model_usable {
+                state.tooling.tasks.clear();
+            }
+        }
+    }
+    state.overview.dirty = true;
+    state.run.dirty = true;
+    state.tooling.dirty = true;
+    state.dirty = true;
+}
+
+fn set_project_identity(state: &mut ShellState, root: &std::path::Path) {
+    let name = root
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .map_or_else(
+            || root.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+    state.project_name = Some(name.clone());
+    state.overview.project = Some(root.display().to_string());
+    state.run.project = Some(name);
+}
+
+fn project_model_status(
+    freshness: ModelFreshness,
+    support: ProjectSupport,
+    degraded_reason: Option<&DegradedReason>,
+    module_count: usize,
+) -> String {
+    let support_label = match support {
+        ProjectSupport::Full => "Full support",
+        ProjectSupport::Degraded => "Degraded support",
+        ProjectSupport::Unsupported => "Unsupported project",
+    };
+    let reason = degraded_reason.map(format_degraded_reason);
+    match freshness {
+        ModelFreshness::Current if support == ProjectSupport::Full => {
+            format!("Model current · {support_label} · {module_count} modules")
+        }
+        ModelFreshness::Current => format!(
+            "Model current · {support_label}: {}",
+            reason.unwrap_or_else(|| "limited Gradle capabilities".into())
+        ),
+        ModelFreshness::Stale | ModelFreshness::Provisional => {
+            format!("Using stale model · Refreshing · {support_label} · {module_count} modules")
+        }
+        ModelFreshness::Refreshing => {
+            format!("Refreshing project model · {module_count} modules")
+        }
+        ModelFreshness::Degraded => {
+            let reason = reason.unwrap_or_else(|| "unknown model failure".into());
+            format!("Model degraded · Using cached model: {reason}")
+        }
+    }
+}
+
+fn format_degraded_reason(reason: &DegradedReason) -> String {
+    match reason {
+        DegradedReason::UnsupportedAgp {
+            detected,
+            supported,
+        } => format!("AGP {detected}; supported {supported}"),
+        DegradedReason::IncompatibleProtocol { expected, found } => {
+            format!("bridge protocol {found}; expected {expected}")
+        }
+        DegradedReason::ApiUnavailable { api } => format!("required API unavailable: {api}"),
+        DegradedReason::MissingWrapper => "Gradle wrapper missing".into(),
+        DegradedReason::ConfigurationFailed { message }
+        | DegradedReason::CacheInvalid { message } => message.clone(),
+        DegradedReason::BridgeFailed { code, message } => format!("{code}: {message}"),
+    }
+}
+
 fn should_exit(event: &Event) -> bool {
     matches!(
         event,
@@ -758,11 +965,14 @@ fn render(frame: &mut Frame<'_>, state: &mut ShellState, theme: LazuliTheme) {
 
     let header_area = inset_horizontal(rows[0], 2);
     let project = state
-        .overview
-        .project
+        .project_name
         .as_deref()
-        .or(state.run.project.as_deref())
-        .unwrap_or("Detecting project");
+        .unwrap_or(match state.project_phase {
+            ProjectPhase::Detecting => "Detecting project",
+            ProjectPhase::Detected => "Project detected",
+            ProjectPhase::Available => "Project available",
+            ProjectPhase::Unavailable => "No project",
+        });
     let target = match (&state.run.module, &state.run.variant) {
         (Some(module), Some(variant)) => format!("{module} / {variant}"),
         _ => "No target selected".into(),
@@ -1114,6 +1324,7 @@ pub enum ShellError {
 mod tests {
     use std::collections::VecDeque;
 
+    use dexdeck_protocol::{BuildInfo, GradleTask, ProjectModel, TaskKind};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
     use super::*;
@@ -1261,6 +1472,156 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>()
+    }
+
+    fn project_snapshot(
+        freshness: ModelFreshness,
+        support: ProjectSupport,
+        degraded_reason: Option<DegradedReason>,
+    ) -> ProjectSnapshot {
+        let root = PathBuf::from("/workspace/shop-android");
+        ProjectSnapshot {
+            freshness,
+            support,
+            degraded_reason,
+            project: ProjectModel {
+                root: root.clone(),
+                build: BuildInfo {
+                    root,
+                    gradle_version: "8.13".into(),
+                    agp_version: Some("8.8".into()),
+                    java_version: Some("17".into()),
+                    kotlin_plugin_version: Some("2.1".into()),
+                },
+                included_builds: vec![],
+                modules: vec![],
+                tasks: vec![GradleTask {
+                    path: ":app:assembleDebug".into(),
+                    name: "assembleDebug".into(),
+                    group: Some("build".into()),
+                    description: None,
+                    origin_build: "main".into(),
+                    module: Some(":app".into()),
+                    variant: Some("debug".into()),
+                    kind: TaskKind::Assemble,
+                }],
+                diagnostics: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn project_events_replace_detection_with_live_model_state()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = ShellState::default();
+        apply_project_event(
+            &mut state,
+            ProjectBackendEvent::Detected {
+                root: PathBuf::from("/workspace/shop-android"),
+                wrapper_found: true,
+            },
+        );
+        assert_eq!(state.project_name.as_deref(), Some("shop-android"));
+        assert_eq!(state.project_phase, ProjectPhase::Detected);
+        assert!(
+            state
+                .overview
+                .model_status
+                .contains("Loading project model")
+        );
+
+        apply_project_event(
+            &mut state,
+            ProjectBackendEvent::Model(Box::new(project_snapshot(
+                ModelFreshness::Current,
+                ProjectSupport::Full,
+                None,
+            ))),
+        );
+        assert_eq!(state.project_phase, ProjectPhase::Available);
+        assert!(state.overview.model_status.contains("Model current"));
+        assert_eq!(state.tooling.tasks.len(), 1);
+
+        let mut terminal = Terminal::new(TestBackend::new(140, 40))?;
+        let theme = LazuliTheme::new(ColorCapability::NoColor, GlyphMode::Ascii);
+        terminal.draw(|frame| render(frame, &mut state, theme))?;
+        let rendered = rendered_text(terminal.backend().buffer());
+        assert!(rendered.contains("DexDeck   shop-android"));
+        assert!(!rendered.contains("Detecting project"));
+        Ok(())
+    }
+
+    #[test]
+    fn degraded_and_failed_project_states_never_look_like_detection() {
+        let mut state = ShellState::default();
+        apply_project_event(
+            &mut state,
+            ProjectBackendEvent::Model(Box::new(project_snapshot(
+                ModelFreshness::Degraded,
+                ProjectSupport::Degraded,
+                Some(DegradedReason::MissingWrapper),
+            ))),
+        );
+        assert!(
+            state
+                .overview
+                .model_status
+                .contains("Gradle wrapper missing")
+        );
+        assert_eq!(state.tooling.tasks.len(), 1);
+
+        apply_project_event(
+            &mut state,
+            ProjectBackendEvent::Error {
+                root: Some(PathBuf::from("/workspace/shop-android")),
+                message: "model watcher stopped".into(),
+            },
+        );
+        assert_eq!(state.project_phase, ProjectPhase::Available);
+        assert_eq!(state.tooling.tasks.len(), 1);
+        assert!(state.overview.model_status.contains("Using cached model"));
+
+        apply_project_event(
+            &mut state,
+            ProjectBackendEvent::Error {
+                root: None,
+                message: "settings.gradle(.kts) was not found".into(),
+            },
+        );
+        assert_eq!(state.project_phase, ProjectPhase::Unavailable);
+        assert_eq!(state.project_name, None);
+        assert!(
+            state
+                .overview
+                .model_status
+                .starts_with("No Android Gradle project")
+        );
+        assert!(state.tooling.tasks.is_empty());
+    }
+
+    #[test]
+    fn drains_a_fixed_number_of_project_notifications_per_tick() {
+        struct Backend(VecDeque<ProjectBackendEvent>);
+        impl ProjectBackend for Backend {
+            fn start(&mut self) -> Result<(), String> {
+                Ok(())
+            }
+            fn try_recv(&mut self) -> Option<ProjectBackendEvent> {
+                self.0.pop_front()
+            }
+            fn stop(&mut self) {}
+        }
+        let mut backend = Backend(
+            (0..10)
+                .map(|index| ProjectBackendEvent::Detected {
+                    root: PathBuf::from(format!("/workspace/project-{index}")),
+                    wrapper_found: true,
+                })
+                .collect(),
+        );
+        let mut state = ShellState::default();
+        assert_eq!(drain_project_notifications(&mut state, &mut backend), 4);
+        assert_eq!(backend.0.len(), 6);
     }
 
     #[test]

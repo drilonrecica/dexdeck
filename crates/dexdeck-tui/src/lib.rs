@@ -19,8 +19,8 @@ pub use logcat_workspace::{LogOverlay, LogWorkspaceAction, LogcatWorkspace};
 pub use overview_workspace::OverviewWorkspace;
 pub use run_workspace::{RUN_HISTORY_LIMIT, RUN_OUTPUT_LIMIT, RunWorkspace, RunWorkspaceAction};
 pub use shell::{
-    DashboardLayout, LogcatBackend, LogcatBackendEvent, ShellError, ShellOptions, run,
-    run_with_logcat,
+    DashboardLayout, LogcatBackend, LogcatBackendEvent, ProjectBackend, ProjectBackendEvent,
+    ShellError, ShellOptions, run, run_with_backends, run_with_logcat,
 };
 pub use test_workspace::{TestWorkspace, TestWorkspaceAction};
 pub use theme::{ColorCapability, GlyphMode, LazuliTheme, SemanticColors};
