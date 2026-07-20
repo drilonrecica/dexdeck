@@ -104,7 +104,8 @@ async fn models_executable_agp_matrix() -> Result<(), Box<dyn std::error::Error>
                         .model
                         .tasks
                         .iter()
-                        .any(|task| task.name == "dexdeckFixtureTask")
+                        .any(|task| task.name == "dexdeckFixtureTask"
+                            && task.description.as_deref() == Some("Résumé café ☕"))
                 ),
                 _ => {}
             }

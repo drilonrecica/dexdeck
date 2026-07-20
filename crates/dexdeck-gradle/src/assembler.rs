@@ -42,6 +42,7 @@ pub enum ModelAssemblyError {
 #[derive(Debug, Default)]
 pub struct ModelAssembler {
     validator: BridgeStreamValidator,
+    stream_hash: Sha256,
     build: Option<BuildInfo>,
     included_builds: BTreeMap<String, IncludedBuild>,
     modules: BTreeMap<String, AndroidModule>,
@@ -52,7 +53,35 @@ pub struct ModelAssembler {
 
 impl ModelAssembler {
     pub fn accept(&mut self, record: BridgeEnvelope) -> Result<(), ModelAssemblyError> {
+        let encoded = if matches!(record.payload, BridgePayload::Complete { .. }) {
+            None
+        } else {
+            Some(
+                serde_json::to_vec(&record)
+                    .map_err(|error| ModelAssemblyError::Serialization(error.to_string()))?,
+            )
+        };
+        self.accept_record(record, encoded.as_deref())
+    }
+
+    pub fn accept_json_line(&mut self, line: &str) -> Result<(), ModelAssemblyError> {
+        let record = serde_json::from_str::<BridgeEnvelope>(line)
+            .map_err(|error| BridgeProtocolError::InvalidJson(error.to_string()))?;
+        let encoded =
+            (!matches!(record.payload, BridgePayload::Complete { .. })).then_some(line.as_bytes());
+        self.accept_record(record, encoded)
+    }
+
+    fn accept_record(
+        &mut self,
+        record: BridgeEnvelope,
+        encoded: Option<&[u8]>,
+    ) -> Result<(), ModelAssemblyError> {
         self.validator.accept(&record)?;
+        if let Some(encoded) = encoded {
+            self.stream_hash.update(encoded);
+            self.stream_hash.update(b"\n");
+        }
         match record.payload {
             BridgePayload::Build { build } => {
                 if self.build.is_some() {
@@ -145,12 +174,6 @@ impl ModelAssembler {
         Ok(())
     }
 
-    pub fn accept_json_line(&mut self, line: &str) -> Result<(), ModelAssemblyError> {
-        let record = serde_json::from_str::<BridgeEnvelope>(line)
-            .map_err(|error| BridgeProtocolError::InvalidJson(error.to_string()))?;
-        self.accept(record)
-    }
-
     pub fn finish(mut self) -> Result<ProjectModel, ModelAssemblyError> {
         let completion = self.validator.finish()?;
         let build = self.build.take().ok_or(ModelAssemblyError::MissingBuild)?;
@@ -184,7 +207,7 @@ impl ModelAssembler {
             tasks: self.tasks.into_values().collect(),
             diagnostics: self.diagnostics,
         };
-        let actual = model_hash(&model)?;
+        let actual = format!("{:x}", self.stream_hash.finalize());
         if completion.model_hash != actual {
             return Err(ModelAssemblyError::ModelHashMismatch {
                 expected: completion.model_hash,
@@ -240,6 +263,18 @@ mod tests {
     use dexdeck_protocol::{BridgeComplete, ModuleKind};
     use std::path::PathBuf;
 
+    fn record_hash(records: &[BridgeEnvelope]) -> Result<String, ModelAssemblyError> {
+        let mut hash = Sha256::new();
+        for record in records {
+            hash.update(
+                serde_json::to_vec(record)
+                    .map_err(|error| ModelAssemblyError::Serialization(error.to_string()))?,
+            );
+            hash.update(b"\n");
+        }
+        Ok(format!("{:x}", hash.finalize()))
+    }
+
     fn build() -> BuildInfo {
         BuildInfo {
             root: PathBuf::from("/project"),
@@ -276,19 +311,59 @@ mod tests {
             tasks: vec![],
             diagnostics: vec![],
         };
+        let records = [
+            BridgeEnvelope::new(BridgePayload::Build { build: build() }),
+            BridgeEnvelope::new(BridgePayload::Module { module: module() }),
+        ];
         let mut assembler = ModelAssembler::default();
-        assembler.accept(BridgeEnvelope::new(BridgePayload::Build { build: build() }))?;
-        assembler.accept(BridgeEnvelope::new(BridgePayload::Module {
-            module: module(),
-        }))?;
+        for record in records.iter().cloned() {
+            assembler.accept(record)?;
+        }
         assembler.accept(BridgeEnvelope::new(BridgePayload::Complete {
             complete: BridgeComplete {
                 duration_ms: 1,
                 record_count: 2,
-                model_hash: model_hash(&expected)?,
+                model_hash: record_hash(&records)?,
             },
         }))?;
         assert_eq!(assembler.finish()?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn hashes_exact_json_lines_instead_of_reserialized_records() -> Result<(), ModelAssemblyError> {
+        let build = r#"{"protocolVersion":1,"type":"build","build":{"root":"/project/caf\u00e9","gradleVersion":"9.5"}}"#;
+        let mut hash = Sha256::new();
+        hash.update(build.as_bytes());
+        hash.update(b"\n");
+        let hash = format!("{:x}", hash.finalize());
+        let complete = format!(
+            "{{\"protocolVersion\":1,\"type\":\"complete\",\"durationMs\":1,\"recordCount\":1,\"modelHash\":\"{hash}\"}}"
+        );
+        let mut assembler = ModelAssembler::default();
+        assembler.accept_json_line(build)?;
+        assembler.accept_json_line(&complete)?;
+        assert_eq!(assembler.finish()?.root, PathBuf::from("/project/café"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_tampered_json_lines() -> Result<(), ModelAssemblyError> {
+        let original = r#"{"protocolVersion":1,"type":"build","build":{"root":"/project","gradleVersion":"9.5"}}"#;
+        let mut hash = Sha256::new();
+        hash.update(original.as_bytes());
+        hash.update(b"\n");
+        let hash = format!("{:x}", hash.finalize());
+        let complete = format!(
+            "{{\"protocolVersion\":1,\"type\":\"complete\",\"durationMs\":1,\"recordCount\":1,\"modelHash\":\"{hash}\"}}"
+        );
+        let mut assembler = ModelAssembler::default();
+        assembler.accept_json_line(&original.replace("9.5", "9.6"))?;
+        assembler.accept_json_line(&complete)?;
+        assert!(matches!(
+            assembler.finish(),
+            Err(ModelAssemblyError::ModelHashMismatch { .. })
+        ));
         Ok(())
     }
 

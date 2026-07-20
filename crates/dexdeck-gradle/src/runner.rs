@@ -111,18 +111,15 @@ impl BridgeRunner {
         };
         let mut assembler = ModelAssembler::default();
         for line in text.lines() {
-            let record = serde_json::from_str::<BridgeEnvelope>(line).map_err(|error| {
-                ModelAssemblyError::Protocol(dexdeck_protocol::BridgeProtocolError::InvalidJson(
-                    error.to_string(),
-                ))
-            })?;
-            if let BridgePayload::Error { code, message, .. } = &record.payload {
-                return Err(BridgeFailure::Reported {
-                    code: redactor.redact_text(code),
-                    message: redactor.redact_text(message),
-                });
+            if let Err(error) = assembler.accept_json_line(line) {
+                return match error {
+                    ModelAssemblyError::Bridge { code, message } => Err(BridgeFailure::Reported {
+                        code: redactor.redact_text(&code),
+                        message: redactor.redact_text(&message),
+                    }),
+                    error => Err(BridgeFailure::Assembly(error)),
+                };
             }
-            assembler.accept(record)?;
         }
         let model = assembler.finish()?;
         Ok(BridgeRunOutput {

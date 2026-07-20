@@ -343,7 +343,7 @@ impl AndroidFixture {
             )?,
             Self::CustomTasks => append(
                 &root.join("build.gradle.kts"),
-                "tasks.register(\"dexdeckFixtureTask\")\n",
+                "tasks.register(\"dexdeckFixtureTask\") { description = \"Résumé café ☕\" }\n",
             )?,
             Self::KotlinSingleApp
             | Self::GroovySingleApp

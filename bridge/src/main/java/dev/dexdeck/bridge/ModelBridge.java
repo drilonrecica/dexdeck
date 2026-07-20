@@ -37,22 +37,22 @@ public final class ModelBridge {
         }
     }
 
-    public static void writeModel(Path output, List<String> records, String canonicalModelJson)
-            throws IOException {
+    public static void writeModel(Path output, List<String> records) throws IOException {
         StringBuilder stream = new StringBuilder();
         for (String record : records) {
             stream.append(record).append('\n');
         }
+        String modelHash = sha256(stream.toString());
         stream.append("{\"protocolVersion\":1,\"type\":\"complete\",\"durationMs\":0,")
                 .append("\"recordCount\":").append(records.size())
-                .append(",\"modelHash\":\"").append(sha256(canonicalModelJson)).append("\"}\n");
+                .append(",\"modelHash\":\"").append(modelHash).append("\"}\n");
         writeAtomic(output, stream.toString());
     }
 
     public static void writeFailure(Path output, String code, String message) throws IOException {
         String error = "{\"protocolVersion\":1,\"type\":\"error\",\"code\":\""
                 + escape(code) + "\",\"message\":\"" + escape(message) + "\"}";
-        writeModel(output, List.of(error), "failure");
+        writeModel(output, List.of(error));
     }
 
     private static void writeAtomic(Path output, String value) throws IOException {

@@ -212,8 +212,7 @@ gradle.rootProject { root ->
                 includedBuilds.each { value -> records << JsonOutput.toJson([protocolVersion: 1, type: "includedBuild", includedBuild: value]) }
                 modules.each { value -> records << JsonOutput.toJson([protocolVersion: 1, type: "module", module: value]) }
                 tasks.each { value -> records << JsonOutput.toJson([protocolVersion: 1, type: "task", task: value]) }
-                def model = [root: root.rootDir.canonicalPath, build: build, includedBuilds: includedBuilds, modules: modules, tasks: tasks]
-                ModelBridge.writeModel(output, records, JsonOutput.toJson(model))
+                ModelBridge.writeModel(output, records)
             } catch (Throwable failure) {
                 ModelBridge.writeFailure(output, "configuration_failed", failure.toString())
                 throw failure
