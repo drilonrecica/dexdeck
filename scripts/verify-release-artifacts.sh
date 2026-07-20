@@ -2,7 +2,10 @@
 set -euo pipefail
 
 root=${1:-target/distrib}
-mapfile -t archives < <(find "$root" -type f \( -name 'dexdeck-*.tar.gz' -o -name 'dexdeck-*.zip' \) | LC_ALL=C sort)
+archives=()
+while IFS= read -r archive; do
+  archives+=("$archive")
+done < <(find "$root" -type f \( -name 'dexdeck-*.tar.gz' -o -name 'dexdeck-*.zip' \) | LC_ALL=C sort)
 
 if [[ ${#archives[@]} -ne 5 ]]; then
   printf 'expected five release archives, found %s\n' "${#archives[@]}" >&2
